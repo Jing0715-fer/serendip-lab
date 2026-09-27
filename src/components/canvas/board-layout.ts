@@ -1,0 +1,74 @@
+// 证据墙自动布局（Task 2-b）
+// 思路：用 dagre（LR）跑一遍拓扑布局拿到「同层内的先后顺序」，
+// 再按 kind 语义 rank 固定分列（question 最左 → source 最右），
+// 列内垂直堆叠并整体绕 0 居中，保证任意数据下都不重叠、层次清晰。
+
+import dagre from '@dagrejs/dagre';
+import type { BoardEdge, BoardNode, NodeKind } from '@/lib/types';
+
+export type NodePosition = { x: number; y: number };
+
+/** 语义分层：question=0, hypothesis=1, gap=1.5, insight=2, evidence=2, source=3 */
+const RANK_BY_KIND: Record<NodeKind, number> = {
+  question: 0,
+  hypothesis: 1,
+  gap: 1.5,
+  insight: 2,
+  evidence: 2,
+  source: 3,
+};
+
+// 节点包围盒估算：卡片宽 210px + 出入把手余量；高度取卡片典型渲染高度
+const NODE_W = 250;
+const NODE_H = 168;
+const NODESEP = 36;
+const RANKSEP = 140;
+
+export function layoutBoard(
+  nodes: BoardNode[],
+  edges: BoardEdge[]
+): Record<string, NodePosition> {
+  const positions: Record<string, NodePosition> = {};
+  if (nodes.length === 0) return positions;
+
+  // 1) dagre 布局：取其拓扑顺序（同 rank 内的 y 次序）作为列内排序依据
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: 'LR', nodesep: NODESEP, ranksep: RANKSEP, marginx: 0, marginy: 0 });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  const ids = new Set(nodes.map((n) => n.id));
+  for (const n of nodes) g.setNode(n.id, { width: NODE_W, height: NODE_H });
+  for (const e of edges) {
+    if (ids.has(e.source) && ids.has(e.target) && e.source !== e.target) {
+      g.setEdge(e.source, e.target);
+    }
+  }
+  dagre.layout(g);
+
+  // 2) 按 kind 分列，列内按 dagre 的 y 序堆叠，整列绕 0 垂直居中
+  const columnStep = NODE_W + RANKSEP;
+  const pitch = NODE_H + NODESEP;
+  const byRank = new Map<number, BoardNode[]>();
+  for (const n of nodes) {
+    const rank = RANK_BY_KIND[n.kind] ?? 2;
+    const bucket = byRank.get(rank);
+    if (bucket) bucket.push(n);
+    else byRank.set(rank, [n]);
+  }
+
+  for (const [rank, group] of byRank) {
+    const ordered = [...group].sort((a, b) => {
+      const ya = (g.node(a.id) as { y?: number } | undefined)?.y ?? 0;
+      const yb = (g.node(b.id) as { y?: number } | undefined)?.y ?? 0;
+      return ya - yb;
+    });
+    const x = rank * columnStep;
+    const stackHeight = ordered.length * NODE_H + Math.max(0, ordered.length - 1) * NODESEP;
+    const startY = -stackHeight / 2;
+    ordered.forEach((n, i) => {
+      positions[n.id] = { x, y: startY + i * pitch };
+    });
+  }
+
+  return positions;
+}

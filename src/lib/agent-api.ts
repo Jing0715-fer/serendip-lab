@@ -1,0 +1,101 @@
+// agent-api.ts — agent-service HTTP 客户端（全部走 Caddy 网关，相对路径 + XTransformPort）
+import type {
+  BoardNode,
+  ResearchQuestion,
+  SessionFull,
+  SessionState,
+  SessionSummary,
+} from '@/lib/types';
+
+const AGENT_PORT = 3002;
+
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+    this.name = 'ApiError';
+  }
+}
+
+async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+  const { json, ...rest } = init ?? {};
+  const res = await fetch(`/api/agent${path}?XTransformPort=${AGENT_PORT}`, {
+    ...rest,
+    headers: {
+      ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(rest.headers ?? {}),
+    },
+    body: json !== undefined ? JSON.stringify(json) : rest.body,
+  });
+  if (!res.ok) {
+    let message = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && typeof body.error === 'string') message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new ApiError(message, res.status);
+  }
+  return (await res.json()) as T;
+}
+
+export type CreateSessionResult = {
+  session: SessionFull;
+  nodes: BoardNode[];
+  edges: unknown[];
+  questions: ResearchQuestion[];
+  narrative: string;
+};
+
+export const agentApi = {
+  listSessions: () => api<{ sessions: SessionSummary[] }>('/sessions'),
+
+  createSession: (opts?: { title?: string; demo?: boolean }) =>
+    api<CreateSessionResult>('/sessions', { method: 'POST', json: opts ?? {} }),
+
+  getSession: (id: string) => api<SessionState>(`/sessions/${id}`),
+
+  patchSession: (id: string, title: string) =>
+    api<{ ok: boolean }>(`/sessions/${id}`, { method: 'PATCH', json: { title } }),
+
+  deleteSession: (id: string) => api<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
+
+  chat: (id: string, text: string) =>
+    api<{ ok: boolean; mode: 'interview' | 'steer' | 'queued' }>(`/sessions/${id}/chat`, {
+      method: 'POST',
+      json: { text },
+    }),
+
+  research: (id: string, opts: { focus?: string; maxSteps?: number; maxMinutes?: number }) =>
+    api<{ ok: boolean }>(`/sessions/${id}/research`, { method: 'POST', json: opts }),
+
+  control: (id: string, action: 'pause' | 'resume' | 'stop') =>
+    api<{ ok: boolean; mode?: string }>(`/sessions/${id}/control`, {
+      method: 'POST',
+      json: { action },
+    }),
+
+  addNote: (
+    id: string,
+    note: { kind: string; title: string; content: string; sourceUrl?: string; tags?: string[] }
+  ) =>
+    api<{ node: BoardNode }>(`/sessions/${id}/notes`, {
+      method: 'POST',
+      json: note,
+    }),
+
+  saveLayout: (id: string, positions: { id: string; x: number; y: number }[]) =>
+    api<{ ok: boolean }>(`/sessions/${id}/layout`, { method: 'POST', json: { positions } }),
+
+  star: (id: string, nodeId: string, starred: boolean) =>
+    api<{ ok: boolean }>(`/sessions/${id}/star`, {
+      method: 'POST',
+      json: { nodeId, starred },
+    }),
+};
+
+export function sseUrl(sessionId: string): string {
+  return `/api/agent/sessions/${sessionId}/stream?XTransformPort=${AGENT_PORT}`;
+}

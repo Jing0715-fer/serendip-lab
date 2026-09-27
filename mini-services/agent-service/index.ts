@@ -1,0 +1,332 @@
+// index.ts — Bun.serve 路由入口（端口 3002，路径前缀 /api/agent）
+import {
+  createSession, getSessionRow, mapSessionFull, listSessionSummaries, deleteSession,
+  updateSessionFields, listMessages, listNodes, listEdges, listQuestions, getPlan,
+  listActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
+  computeStats, touchSession, NODE_KINDS,
+} from './src/db'
+import { broadcast, makeSseResponse } from './src/emitter'
+import { AgentRuntime, stateSnapshot } from './src/runtime'
+import { seedDemoSession } from './src/seed'
+import { sleep, clamp } from './src/util'
+
+const PORT = 3002
+const VERSION = '1.0.0'
+const startedAt = Date.now()
+
+const json = (data: unknown, status = 200) =>
+  new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+  })
+
+// ---- 防静默崩溃：Bun 对 unhandled rejection 默认退出进程，全部接管并记日志 ----
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandledRejection]', err)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err)
+})
+
+const errJson = (message: string, status: number) => json({ error: message }, status)
+
+async function readBody(request: Request): Promise<any> {
+  try {
+    return await request.json()
+  } catch {
+    return {}
+  }
+}
+
+// ---------- GET /api/agent/sessions/:id 完整数据 ----------
+function sessionFullPayload(id: string) {
+  const row = getSessionRow(id)
+  if (!row) return null
+  const budget = getBudget(id)
+  const elapsedMs = budget.startedAt ? Date.now() - budget.startedAt : budget.elapsedMs
+  const stats = computeStats(id, { ...budget, elapsedMs })
+  return {
+    session: mapSessionFull(row),
+    messages: listMessages(id),
+    nodes: listNodes(id),
+    edges: listEdges(id),
+    narrative: row.narrative || '',
+    questions: listQuestions(id),
+    plan: getPlan(id),
+    stats,
+    activity: listActivity(id, 120),
+  }
+}
+
+// ---------- chat 语义（§3） ----------
+async function handleChat(id: string, request: Request) {
+  const row = getSessionRow(id)
+  if (!row) return errJson('session not found', 404)
+  const body = await readBody(request)
+  const text = String(body.text || '').trim()
+  if (!text) return errJson('缺少 text', 400)
+
+  const runtime = AgentRuntime.get(id)
+
+  // 1) awaiting_user：用户回复即答案 → 注入并恢复
+  if (row.phase === 'awaiting_user') {
+    const msg = insertMessage(id, { role: 'user', kind: 'chat', content: text })
+    broadcast(id, 'message', msg)
+    const injected = runtime.injectUserAnswer(text)
+    if (!injected) {
+      // runtime 不在等待（如服务重启后）：转为 steer 入队
+      insertMessage(id, { role: 'user', kind: 'steer', content: text })
+      runtime.steeringQueue.push(text)
+    }
+    return json({ ok: true, mode: 'queued' })
+  }
+
+  // 2) 调查类 phase：steer 入队
+  if (row.phase === 'planning' || row.phase === 'investigating' || row.phase === 'synthesizing') {
+    insertMessage(id, { role: 'user', kind: 'steer', content: text })
+    runtime.steeringQueue.push(text)
+    const notice = insertMessage(id, {
+      role: 'system',
+      kind: 'notice',
+      content: '已加入调查线索队列，Agent 将在检查点纳入',
+    })
+    broadcast(id, 'message', notice)
+    touchSession(id)
+    return json({ ok: true, mode: 'steer' })
+  }
+
+  // 3) interview / idle / done：访谈链路（互斥）
+  if (runtime.interviewLocked) return errJson('agent_busy', 409)
+  // LLM 访谈耗时较长 → 后台执行，立即返回（结果经 SSE 推送）
+  void runtime.interviewTurn(text).catch((e) => {
+    console.error('[interviewTurn]', e)
+    try {
+      const errMsg = insertMessage(id, { role: 'assistant', kind: 'notice', content: '（访谈者思考暂时不可用，请稍后重试）' })
+      broadcast(id, 'message', errMsg)
+    } catch { /* ignore */ }
+  })
+  return json({ ok: true, mode: 'interview' })
+}
+
+// ---------- research ----------
+async function handleResearch(id: string, request: Request) {
+  const row = getSessionRow(id)
+  if (!row) return errJson('session not found', 404)
+  const body = await readBody(request)
+  const focus = body.focus ? String(body.focus).trim().slice(0, 500) : undefined
+  const maxSteps = clamp(Math.round(Number(body.maxSteps) || 40), 1, 200)
+  const maxMinutes = clamp(Math.round(Number(body.maxMinutes) || 15), 1, 240)
+
+  const existing = AgentRuntime.find(id)
+  if (existing?.running && !existing.paused) return errJson('agent_busy', 409)
+
+  // 已暂停的旧循环 → stop 收尾后自动开启新一轮（异步，不阻塞响应）
+  void (async () => {
+    try {
+      if (existing?.running) {
+        existing.stop()
+        for (let i = 0; i < 600 && existing.running; i++) await sleep(200)
+      }
+      const rt = AgentRuntime.get(id)
+      if (rt.running) {
+        for (let i = 0; i < 600 && rt.running; i++) await sleep(200)
+      }
+      console.log(`[research] session=${id} focus=${focus || '(auto)'} maxSteps=${maxSteps} maxMinutes=${maxMinutes}`)
+      await rt.start(focus, maxSteps, maxMinutes)
+    } catch (e) {
+      console.error('[research-start]', e)
+    }
+  })()
+
+  return json({ ok: true })
+}
+
+// ---------- control ----------
+function handleControl(id: string, body: any) {
+  const action = String(body.action || '')
+  const rt = AgentRuntime.find(id)
+  switch (action) {
+    case 'pause':
+      rt?.pause()
+      return json({ ok: true })
+    case 'resume': {
+      if (rt?.running && rt.paused) {
+        rt.resume()
+        return json({ ok: true })
+      }
+      if (rt?.running && !rt.paused) return errJson('agent_not_paused', 400)
+      // runtime 已丢失（进程重启/热重载）但 DB 仍是 paused → 等效于再次启动调查（planner 续查已有证据墙）
+      const row = getSessionRow(id)
+      if (row && (row.status === 'paused' || row.status === 'interrupted')) {
+        const b = getBudget(id)
+        console.log(`[control] resume-as-restart session=${id}`)
+        void AgentRuntime.get(id).start(undefined, b.maxSteps, b.maxMinutes)
+        return json({ ok: true, mode: 'restarted' })
+      }
+      return errJson('agent_not_paused', 400)
+    }
+    case 'stop':
+      rt?.stop()
+      return json({ ok: true })
+    default:
+      return errJson('未知 action（合法值: pause/resume/stop）', 400)
+  }
+}
+
+// ---------- 路由 ----------
+const server = Bun.serve({
+  port: PORT,
+  // SSE 长连接：默认 idleTimeout(10s) 会掐断 15s 心跳间隔的空闲流，放宽到 60s
+  idleTimeout: 60,
+  async fetch(request) {
+    const url = new URL(request.url)
+    const path = url.pathname
+    const method = request.method
+
+    // --- 健康检查 ---
+    if (method === 'GET' && path === '/api/agent/health') {
+      return json({ ok: true, version: VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000) })
+    }
+
+    // --- /api/agent/sessions 集合 ---
+    if (path === '/api/agent/sessions') {
+      if (method === 'GET') {
+        return json({ sessions: listSessionSummaries() })
+      }
+      if (method === 'POST') {
+        const body = await readBody(request)
+        if (body.demo === true) {
+          const sid = seedDemoSession()
+          console.log(`[seed] demo session created: ${sid}`)
+          return json({
+            session: mapSessionFull(getSessionRow(sid)!),
+            nodes: listNodes(sid),
+            edges: listEdges(sid),
+            questions: listQuestions(sid),
+            narrative: getSessionRow(sid)!.narrative,
+          })
+        }
+        const row = createSession(body.title ? String(body.title).slice(0, 80) : undefined)
+        return json({
+          session: mapSessionFull(row),
+          nodes: [],
+          edges: [],
+          questions: [],
+          narrative: '',
+        })
+      }
+      return errJson('method not allowed', 405)
+    }
+
+    // --- /api/agent/sessions/:id/stream（SSE） ---
+    const streamMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)\/stream$/)
+    if (streamMatch && method === 'GET') {
+      const id = streamMatch[1]
+      const row = getSessionRow(id)
+      if (!row) return errJson('session not found', 404)
+      return makeSseResponse(request, id, row.phase, row.status)
+    }
+
+    // --- /api/agent/sessions/:id 子操作 ---
+    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star))?$/)
+    if (subMatch) {
+      const id = subMatch[1]
+      const action = subMatch[2]
+      const row = getSessionRow(id)
+      if (!row) return errJson('session not found', 404)
+
+      if (!action) {
+        if (method === 'GET') {
+          const payload = sessionFullPayload(id)
+          return payload ? json(payload) : errJson('session not found', 404)
+        }
+        if (method === 'PATCH') {
+          const body = await readBody(request)
+          const title = String(body.title || '').trim()
+          if (!title) return errJson('缺少 title', 400)
+          updateSessionFields(id, { title: title.slice(0, 80) })
+          return json({ ok: true })
+        }
+        if (method === 'DELETE') {
+          const rt = AgentRuntime.find(id)
+          rt?.stop()
+          deleteSession(id)
+          console.log(`[session] deleted: ${id}`)
+          return json({ ok: true })
+        }
+        return errJson('method not allowed', 405)
+      }
+
+      if (action === 'chat' && method === 'POST') return handleChat(id, request)
+      if (action === 'research' && method === 'POST') return handleResearch(id, request)
+
+      if (action === 'control' && method === 'POST') {
+        const body = await readBody(request)
+        return handleControl(id, body)
+      }
+
+      if (action === 'notes' && method === 'POST') {
+        const body = await readBody(request)
+        const kind = String(body.kind || 'evidence')
+        if (!NODE_KINDS.includes(kind as any)) return errJson(`非法 kind（合法值: ${NODE_KINDS.join('/')})`, 400)
+        const title = String(body.title || '').trim()
+        if (!title) return errJson('缺少 title', 400)
+        const content = String(body.content || '').trim()
+        const node = insertNode(id, {
+          kind: kind as any,
+          title,
+          content,
+          sourceUrl: body.sourceUrl ? String(body.sourceUrl) : null,
+          tags: Array.isArray(body.tags) ? body.tags.map(String) : [],
+          pinnedBy: 'user',
+        })
+        // 同步写入 steer 消息供 Agent 后续读取
+        const msg = insertMessage(id, {
+          role: 'user',
+          kind: 'steer',
+          content: `【用户手动添加线索】${title}: ${content}`,
+        })
+        broadcast(id, 'message', msg)
+        broadcast(id, 'state', stateSnapshot(id))
+        console.log(`[notes] user note added: ${node.id} (${kind})`)
+        return json({ node })
+      }
+
+      if (action === 'layout' && method === 'POST') {
+        const body = await readBody(request)
+        const positions = Array.isArray(body.positions) ? body.positions : []
+        setNodePositions(
+          id,
+          positions
+            .filter((p: any) => p && p.id && Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.y)))
+            .map((p: any) => ({ id: String(p.id), x: Number(p.x), y: Number(p.y) }))
+        )
+        return json({ ok: true })
+      }
+
+      if (action === 'star' && method === 'POST') {
+        const body = await readBody(request)
+        const nodeId = String(body.nodeId || '')
+        if (!nodeId) return errJson('缺少 nodeId', 400)
+        updateNode(id, nodeId, { starred: !!body.starred })
+        broadcast(id, 'state', stateSnapshot(id))
+        return json({ ok: true })
+      }
+
+      return errJson('method not allowed', 405)
+    }
+
+    return errJson('not found', 404)
+  },
+})
+
+console.log(`[agent-service] listening on port ${PORT} (v${VERSION})`)
+console.log(`[agent-service] db at ${process.cwd()}/data/serendip.db`)
+
+// 每分钟打印运行中会话与 SSE 连接概况（写入 dev.log 便于观察）
+setInterval(() => {
+  const sessions = listSessionSummaries().filter((s) => s.status === 'running' || s.status === 'thinking' || s.status === 'awaiting_user')
+  if (sessions.length) {
+    console.log(`[heartbeat] active: ${sessions.map((s) => `${s.id.slice(0, 8)}(${s.phase}/${s.status})`).join(', ')}`)
+  }
+}, 60_000)
