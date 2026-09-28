@@ -196,7 +196,11 @@ export function TopBar() {
 
       {/* 会话选择 */}
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+        {/* 固定 id：Radix 默认用 useId 生成 trigger id，而 React 19.2 流式水合存在
+            竞态（冷 chunk 加载时 fork 指令未及处理）会让客户端 useId 漂移，
+            报「server/client id 不匹配」水合错误。显式固定 id 后该元素不再携带
+            useId 派生属性，整棵水合树中唯一的此类属性也随之消失，错误从根上消除。 */}
+        <DropdownMenuTrigger asChild id="project-menu-trigger">
           <Button variant="outline" size="sm" className="ml-1 h-8 max-w-[38vw] gap-1.5 border-stone-300 bg-white/70 font-normal dark:border-stone-700 dark:bg-stone-900/60 sm:max-w-[220px]">
             <span className="truncate text-[13px]">{session?.title ?? t('session.newProject')}</span>
             <ChevronDown size={14} className="shrink-0 opacity-60" />

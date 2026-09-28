@@ -5,7 +5,7 @@
 
 import '@xyflow/react/dist/style.css';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -48,17 +48,38 @@ export type EvidenceBoardProps = {
 
 /* ---------------- 图例（左上角，可折叠） ---------------- */
 
-function BoardLegend() {
-  // 窄屏默认折叠，避免遮住画布
-  const [open, setOpen] = useState(
-    () => typeof window === 'undefined' || window.innerWidth >= 640
+/* 视口宽度探针（水合安全）：SSR / 水合首帧固定返回 true，与服务端渲染一致；
+ * 挂载后由 matchMedia 客户端快照接管真实宽度。
+ * 不能用 useState(() => window.innerWidth >= 640) 这类惰性初始化——窄视口下
+ * 客户端首帧树与服务端 HTML 分叉，会导致整棵树的 radix useId 水合错位
+ * （React 19.2 的 _R_ 树路径 id 全体漂移）。 */
+function useViewportAtLeast(px: number): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const mq = window.matchMedia(`(min-width: ${px}px)`);
+      mq.addEventListener('change', onChange);
+      return () => mq.removeEventListener('change', onChange);
+    },
+    [px]
   );
+  return useSyncExternalStore(
+    subscribe,
+    () => window.matchMedia(`(min-width: ${px}px)`).matches,
+    () => true
+  );
+}
+
+function BoardLegend() {
+  // 窄屏默认折叠，避免遮住画布；userOpen=null 表示用户未干预，跟随视口默认值
+  const wide = useViewportAtLeast(640);
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? wide;
   const t = useT();
   const lang = useI18n((s) => s.lang);
 
   return (
     <aside className="ev-legend" aria-label={t('canvas.legend')}>
-      <button type="button" className="ev-legend__toggle" onClick={() => setOpen((v) => !v)}>
+      <button type="button" className="ev-legend__toggle" onClick={() => setUserOpen(!open)}>
         <span className="ev-legend__pin" aria-hidden="true" />
         <span className="ev-legend__title">{t('canvas.legend')}</span>
         {open ? <ChevronUp size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
