@@ -135,17 +135,38 @@ export function EvidenceBoard({
     [nodes, layout, liveSet]
   );
 
-  const rfEdges = useMemo<EvidenceFlowEdge[]>(
-    () =>
-      edges.map((e) => ({
+  const rfEdges = useMemo<EvidenceFlowEdge[]>(() => {
+    // 锚点分散：同一张卡上的多根绳沿边均匀散开，避免全部挤在卡片中点
+    const count = new Map<string, number>();
+    const seen = new Map<string, number>();
+    for (const e of edges) {
+      count.set(e.source, (count.get(e.source) ?? 0) + 1);
+      count.set(e.target, (count.get(e.target) ?? 0) + 1);
+    }
+    const spread = (i: number, total: number): number =>
+      total <= 1 ? 0.5 : 0.28 + (0.44 * (i - 1)) / (total - 1);
+
+    return edges.map((e) => {
+      const s = (seen.get(e.source) ?? 0) + 1;
+      seen.set(e.source, s);
+      const t = (seen.get(e.target) ?? 0) + 1;
+      seen.set(e.target, t);
+      return {
         id: e.id,
         source: e.source,
         target: e.target,
         type: 'string',
-        data: { relation: e.relation, label: e.label },
-      })),
-    [edges]
-  );
+        data: {
+          relation: e.relation,
+          label: e.label,
+          ratio: [spread(s, count.get(e.source) ?? 1), spread(t, count.get(e.target) ?? 1)] as [
+            number,
+            number,
+          ],
+        },
+      };
+    });
+  }, [edges]);
 
   // 受控节点 + 本地拖拽状态：拖动即时生效，结束后上报全部位置
   const [flowNodes, setFlowNodes] = useState<EvidenceFlowNode[]>(rfNodes);

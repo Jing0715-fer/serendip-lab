@@ -644,7 +644,7 @@ export class AgentRuntime {
       .filter(Boolean)
       .join('\n\n')
 
-    const res = await llmJson<any>(PLANNER_PROMPT, userPrompt, () => this.countLlm())
+    const res = await llmJson<any>(PLANNER_PROMPT, userPrompt, () => this.countLlm(), { thinking: true })
     if (!res.ok) {
       insertActivity(this.sessionId, { type: 'notice', summary: `规划失败: ${res.error}`, ok: false })
       // 兜底计划
@@ -717,7 +717,7 @@ export class AgentRuntime {
       remainingMinutes: Math.max(0, Math.round((b.maxMinutes * 60_000 - (b.startedAt ? now() - b.startedAt : 0)) / 60_000)),
     })
     const userPrompt = `# 调查历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence 落到证据墙（预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
-    const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm())
+    const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm(), { thinking: true })
     if (!res.ok) {
       const isLlmFailure = /LLM (重试)?调用失败/.test(res.error)
       return { ok: false, kind: isLlmFailure ? 'llm' : 'parse', error: res.error }
@@ -750,14 +750,14 @@ export class AgentRuntime {
       '请输出严格 JSON。',
     ].join('\n\n')
 
-    const res0 = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm())
+    const res0 = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), { thinking: true })
     // 结案陈词是关键调用：退避重试（429 限流常见），最多 3 轮
     let res = res0
     if (!res.ok) {
       for (let i = 1; i <= 2; i++) {
         insertActivity(this.sessionId, { type: 'notice', summary: `综合失败（${res.error.slice(0, 80)}），${20 * i}s 后重试 ${i}/2`, ok: false })
         await sleep(20_000 * i)
-        res = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm())
+        res = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), { thinking: true })
         if (res.ok) break
       }
     }

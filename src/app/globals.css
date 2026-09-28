@@ -451,16 +451,13 @@
   transform: rotate(3deg);
 }
 
-/* ---------- 把手：左右 6px 半透明棕圆点 ---------- */
+/* ---------- 把手：隐形（v2 浮动锚点后，绳子吸附卡片边缘而非把手） ---------- */
 .react-flow__handle.ev-handle {
-  width: 6px;
-  height: 6px;
-  min-width: 6px;
-  min-height: 6px;
-  border-radius: 9999px;
-  background: rgba(92, 60, 24, 0.72);
-  border: 1px solid rgba(255, 243, 214, 0.6);
-  box-shadow: 0 1px 2px rgba(40, 24, 8, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* ---------- 红绳边标签：挂在绳中点下方的小纸条 + 迷你图钉 ---------- */
