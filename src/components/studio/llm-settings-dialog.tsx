@@ -28,22 +28,30 @@ import { cn } from '@/lib/utils';
 import { agentApi } from '@/lib/agent-api';
 import {
   AGENT_FACE_LABEL,
-  type AgentFace,
-  type LlmSettingsView,
-  type ProviderModelInfo,
-  type ProviderProfileInfo,
-  type LlmTestResult,
+  fmt,
+  useI18n,
+  useT,
+  type Lang,
+} from '@/lib/i18n';
+import type {
+  AgentFace,
+  LlmSettingsView,
+  ProviderModelInfo,
+  ProviderProfileInfo,
+  LlmTestResult,
 } from '@/lib/types';
 
 const FACE_ORDER: AgentFace[] = ['interviewer', 'planner', 'investigator', 'synthesizer'];
-const FACE_HINT: Record<AgentFace, string> = {
-  interviewer: '对话延迟优先',
-  planner: '任务分解与假说设计',
-  investigator: 'ReAct 循环主脑',
-  synthesizer: '结案叙事与评分',
+const FACE_HINT: Record<AgentFace, Record<Lang, string>> = {
+  interviewer: { zh: '对话延迟优先', en: 'Latency-sensitive dialogue' },
+  planner: { zh: '任务分解与假说设计', en: 'Task decomposition & hypotheses' },
+  investigator: { zh: 'ReAct 循环主脑', en: 'ReAct loop core' },
+  synthesizer: { zh: '综述叙事与评分', en: 'Review narrative & scoring' },
 };
 
 export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
   const [catalog, setCatalog] = useState<ProviderProfileInfo[]>([]);
   const [providerId, setProviderId] = useState('builtin');
   const [model, setModel] = useState('');
@@ -94,9 +102,9 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         setTemperature(settings.temperature == null ? '' : String(settings.temperature));
         setThinking(settings.thinking);
       })
-      .catch((e) => toast.error(`读取配置失败：${e.message}`))
+      .catch((e) => toast.error(fmt(t('llm.readFailed'), { msg: e.message })))
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, t]);
 
   const profile = catalog.find((p) => p.id === providerId);
   const isBuiltin = providerId === 'builtin';
@@ -111,11 +119,11 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
     async (opts: { manual?: boolean } = {}) => {
       if (!profile || isBuiltin || profile.supportsModelList === false) return;
       if (providerId === 'custom' && !baseUrlOverride.trim()) {
-        if (opts.manual) toast.error('自定义端点需要先填写 Base URL');
+        if (opts.manual) toast.error(t('llm.customUrlFirst'));
         return;
       }
       if (!apiKey.trim() && !keyConfigured && !profile.keyless) {
-        if (opts.manual) toast.error('请先填写 API Key');
+        if (opts.manual) toast.error(t('llm.needKeyFirst'));
         return;
       }
       setFetchingModels(true);
@@ -128,28 +136,28 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         });
         if (r.ok && r.models.length > 0) {
           setRemoteModels(r.models);
-          setRemoteModelsNote(r.discovered ? `已从 ${profile.displayName} 拉取 ${r.count} 个模型` : null);
+          setRemoteModelsNote(r.discovered ? fmt(t('llm.fetchedNote'), { name: profile.displayName, n: r.count }) : null);
           // 当前选中模型不在列表中 → 切到列表第一个
           const cur = modelInput.trim() || model || profile.defaultModel;
           if (cur && !r.models.some((m) => m.id === cur)) {
             setModel(r.models[0].id);
             setModelInput('');
-            toast.info(`当前模型不在列表中，已切换为 ${r.models[0].id}`);
+            toast.info(fmt(t('llm.notInList'), { model: r.models[0].id }));
           }
         } else {
           setRemoteModels(null);
-          setRemoteModelsNote(r.error ?? '未获取到模型列表，使用内置目录');
-          if (opts.manual) toast.error(`获取模型列表失败：${r.error ?? '未知错误'}`);
+          setRemoteModelsNote(r.error ?? t('llm.noList'));
+          if (opts.manual) toast.error(fmt(t('llm.fetchFailed'), { msg: r.error ?? 'unknown' }));
         }
       } catch (e) {
         setRemoteModels(null);
         setRemoteModelsNote(e instanceof Error ? e.message : String(e));
-        if (opts.manual) toast.error(`获取模型列表失败：${e instanceof Error ? e.message : String(e)}`);
+        if (opts.manual) toast.error(fmt(t('llm.fetchFailed'), { msg: e instanceof Error ? e.message : String(e) }));
       } finally {
         setFetchingModels(false);
       }
     },
-    [profile, isBuiltin, providerId, apiKey, keyConfigured, baseUrlOverride, model, modelInput]
+    [profile, isBuiltin, providerId, apiKey, keyConfigured, baseUrlOverride, model, modelInput, t]
   );
 
   // 自动获取：填完 Key（停止输入 900ms）或切换到无 Key 供应商时触发
@@ -161,17 +169,17 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
     const sig = `${providerId}|${apiKey.trim()}|${baseUrlOverride.trim()}|${keyConfigured ? 'saved' : 'nosaved'}`;
     if (sig === lastAutoSig.current) return;
     lastAutoSig.current = sig;
-    const t = setTimeout(() => void fetchModels(), 900);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => void fetchModels(), 900);
+    return () => clearTimeout(timer);
   }, [loading, providerId, apiKey, baseUrlOverride, catalog, keyConfigured, fetchModels]);
 
   const save = useCallback(async () => {
     if (!isBuiltin && !profile?.keyless && !keyConfigured && !apiKey.trim()) {
-      toast.error('请填写 API Key，或切回内置网关');
+      toast.error(t('llm.needKey'));
       return;
     }
     if (!isBuiltin && providerId === 'custom' && !baseUrlOverride.trim()) {
-      toast.error('自定义端点需要填写 Base URL');
+      toast.error(t('llm.needUrl'));
       return;
     }
     setSaving(true);
@@ -187,14 +195,14 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
       savedProviderId.current = providerId;
       setApiKey('');
       setHasKey(true);
-      toast.success('LLM 配置已保存，下次调用即生效');
+      toast.success(t('llm.saved'));
       onOpenChange(false);
     } catch (e) {
-      toast.error(`保存失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error(fmt(t('llm.saveFailed'), { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setSaving(false);
     }
-  }, [isBuiltin, profile, keyConfigured, apiKey, providerId, baseUrlOverride, effectiveModel, temperature, thinking, onOpenChange]);
+  }, [isBuiltin, profile, keyConfigured, apiKey, providerId, baseUrlOverride, effectiveModel, temperature, thinking, onOpenChange, t]);
 
   const runTest = useCallback(async () => {
     setTesting(true);
@@ -227,7 +235,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-display text-[15px] text-stone-800 dark:text-stone-100">
             <PlugZap size={15} className="text-[#a3450f]" />
-            LLM 配置
+            {t('llm.title')}
           </DialogTitle>
         </DialogHeader>
 
@@ -240,8 +248,8 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             {/* 供应商目录 */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-                <PlugZap size={12} className="text-amber-700" /> 供应商
-                <span className="text-[10.5px] font-normal text-stone-400">（{catalog.length} 家可选）</span>
+                <PlugZap size={12} className="text-amber-700" /> {t('llm.provider')}
+                <span className="text-[10.5px] font-normal text-stone-400">（{fmt(t('llm.providerCount'), { n: catalog.length })}）</span>
               </div>
               <div className="grid grid-cols-3 gap-1.5">
                 {catalog.map((p) => (
@@ -267,7 +275,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                       {p.displayName}
                     </div>
                     <div className="mt-0.5 truncate text-[10px] text-stone-400">
-                      {p.keyless ? '无需 Key' : p.models.length ? `${p.models.length} 个模型` : '填 URL + Key'}
+                      {p.keyless ? t('llm.keyless') : p.models.length ? fmt(t('llm.modelsCount'), { n: p.models.length }) : t('llm.urlKey')}
                     </div>
                   </button>
                 ))}
@@ -279,7 +287,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 text-[11px] text-emerald-800 underline-offset-2 hover:underline dark:text-emerald-400"
                 >
-                  获取 API Key <ExternalLink size={10} />
+                  {t('llm.getKey')} <ExternalLink size={10} />
                 </a>
               )}
               {profile?.note && (
@@ -290,13 +298,13 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             {/* 模型 */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-                模型 {isBuiltin && <span className="text-[10.5px] font-normal text-stone-400">（内置网关由环境固定）</span>}
+                {t('llm.model')} {isBuiltin && <span className="text-[10.5px] font-normal text-stone-400">（{t('llm.builtinNote')}）</span>}
               </div>
               <div className="flex gap-2">
                 {models.length > 0 ? (
                   <Select value={model || profile?.defaultModel || ''} onValueChange={(v) => { setModel(v); setModelInput(''); }}>
                     <SelectTrigger className="h-9 min-w-0 flex-1 border-stone-300 bg-white/70 text-[13px] dark:border-stone-700 dark:bg-stone-800/70">
-                      <SelectValue placeholder="选择模型" />
+                      <SelectValue placeholder={t('llm.selectModel')} />
                     </SelectTrigger>
                     <SelectContent className="max-h-72 border-stone-300 bg-[#fdfaf1] dark:border-stone-700 dark:bg-stone-900">
                       {models.map((m) => (
@@ -311,7 +319,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                   <Input
                     value={modelInput || model}
                     onChange={(e) => setModelInput(e.target.value)}
-                    placeholder="模型 ID，如 deepseek-chat / gpt-4o"
+                    placeholder={t('llm.modelPh')}
                     className="h-9 min-w-0 flex-1 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70"
                   />
                 )}
@@ -325,14 +333,14 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                     disabled={fetchingModels}
                   >
                     {fetchingModels ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                    获取列表
+                    {t('llm.fetchList')}
                   </Button>
                 )}
               </div>
               <Input
                 value={models.length > 0 ? modelInput : ''}
                 onChange={(e) => setModelInput(e.target.value)}
-                placeholder={models.length > 0 ? '或手填模型 ID（不在列表中时）' : ''}
+                placeholder={models.length > 0 ? t('llm.manualModel') : ''}
                 className={cn(
                   'h-9 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70',
                   models.length === 0 && 'hidden'
@@ -349,19 +357,19 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             {!isBuiltin && (
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-                  <KeyRound size={12} className="text-amber-700" /> API Key
-                  {keyConfigured && <span className="text-[10.5px] font-normal text-emerald-700 dark:text-emerald-400">已配置（填写可覆盖）</span>}
+                  <KeyRound size={12} className="text-amber-700" /> {t('llm.apiKey')}
+                  {keyConfigured && <span className="text-[10.5px] font-normal text-emerald-700 dark:text-emerald-400">{t('llm.keyConfigured')}</span>}
                 </div>
                 <Input
                   type="password"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={profile?.keyless ? '本地服务无需 Key，可留空' : `sk-…（${profile?.apiKeyEnv || '环境变量兜底'}）`}
+                  placeholder={profile?.keyless ? t('llm.keyPhKeyless') : fmt(t('llm.keyPh'), { env: profile?.apiKeyEnv || (lang === 'zh' ? '环境变量兜底' : 'env fallback') })}
                   className="h-9 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70"
                   autoComplete="off"
                 />
                 <p className="text-[10.5px] leading-relaxed text-stone-400">
-                  填写后自动拉取该供应商的模型列表。Key 只保存在本机 agent-service 的 SQLite 中，不经过任何第三方；留空时读取环境变量 {profile?.apiKeyEnv || '—'}。
+                  {fmt(t('llm.keyNote'), { env: profile?.apiKeyEnv || '—' })}
                 </p>
               </div>
             )}
@@ -369,7 +377,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             {/* Base URL 覆盖 */}
             {!isBuiltin && (
               <div className="space-y-1.5">
-                <div className="text-[12.5px] font-medium text-stone-700 dark:text-stone-200">Base URL</div>
+                <div className="text-[12.5px] font-medium text-stone-700 dark:text-stone-200">{t('llm.baseUrl')}</div>
                 <Input
                   value={baseUrlOverride}
                   onChange={(e) => setBaseUrlOverride(e.target.value)}
@@ -377,7 +385,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                   className="h-9 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70"
                 />
                 <p className="text-[10.5px] leading-relaxed text-stone-400">
-                  {providerId === 'custom' ? '必填：任何 OpenAI 兼容端点（/chat/completions）' : '留空使用默认地址；支持代理或私有部署'}
+                  {providerId === 'custom' ? t('llm.urlNoteCustom') : t('llm.urlNoteDefault')}
                 </p>
               </div>
             )}
@@ -385,25 +393,25 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             {/* 温度 */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-                <Thermometer size={12} className="text-amber-700" /> 采样温度
+                <Thermometer size={12} className="text-amber-700" /> {t('llm.temperature')}
               </div>
               <div className="flex items-center gap-2">
                 <Input
                   value={temperature}
                   onChange={(e) => setTemperature(e.target.value)}
-                  placeholder="留空 = 供应商默认"
+                  placeholder={t('llm.tempPh')}
                   inputMode="decimal"
                   className="h-9 w-36 border-stone-300 bg-white/70 text-[12.5px] dark:border-stone-700 dark:bg-stone-800/70"
                 />
-                <p className="text-[10.5px] leading-relaxed text-stone-400">0–2；调查类建议 0.2–0.7</p>
+                <p className="text-[10.5px] leading-relaxed text-stone-400">{t('llm.tempHint')}</p>
               </div>
             </div>
 
             {/* thinking 分面孔开关 */}
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-                <Brain size={12} className="text-amber-700" /> 长链推理（thinking）
-                {!isBuiltin && <span className="text-[10.5px] font-normal text-stone-400">（内置网关专属；DeepSeek R1 类模型由服务端原生推理）</span>}
+                <Brain size={12} className="text-amber-700" /> {t('llm.thinking')}
+                {!isBuiltin && <span className="text-[10.5px] font-normal text-stone-400">（{t('llm.thinkingNote')}）</span>}
               </div>
               <div className="rounded-xl border border-stone-300/70 bg-white/50 p-1 dark:border-stone-700 dark:bg-stone-800/40">
                 {FACE_ORDER.map((face, i) => (
@@ -415,14 +423,14 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                     )}
                   >
                     <div className="leading-tight">
-                      <div className="text-[12.5px] font-medium text-stone-700 dark:text-stone-200">{AGENT_FACE_LABEL[face]}</div>
-                      <div className="text-[10.5px] text-stone-400">{FACE_HINT[face]}</div>
+                      <div className="text-[12.5px] font-medium text-stone-700 dark:text-stone-200">{AGENT_FACE_LABEL[face][lang]}</div>
+                      <div className="text-[10.5px] text-stone-400">{FACE_HINT[face][lang]}</div>
                     </div>
                     <Switch
                       checked={thinking[face]}
-                      onCheckedChange={(v) => setThinking((t) => ({ ...t, [face]: v }))}
+                      onCheckedChange={(v) => setThinking((tt) => ({ ...tt, [face]: v }))}
                       disabled={!isBuiltin}
-                      aria-label={`${AGENT_FACE_LABEL[face]} thinking 开关`}
+                      aria-label={`${AGENT_FACE_LABEL[face][lang]} thinking`}
                     />
                   </div>
                 ))}
@@ -440,7 +448,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                 disabled={testing}
               >
                 {testing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} className="text-amber-700" />}
-                测试连接
+                {t('llm.test')}
               </Button>
               {testResult && (
                 <div
@@ -456,12 +464,12 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                   <div className="min-w-0">
                     {testResult.ok ? (
                       <>
-                        连接正常 · {testResult.model} · {testResult.latencyMs}ms
-                        {testResult.reply ? <span className="text-stone-400"> · 回复「{testResult.reply.slice(0, 20)}」</span> : null}
+                        {fmt(t('llm.testOk'), { model: testResult.model, ms: testResult.latencyMs })}
+                        {testResult.reply ? <span className="text-stone-400">{fmt(t('llm.testReply'), { reply: testResult.reply.slice(0, 20) })}</span> : null}
                       </>
                     ) : (
                       <>
-                        连接失败 · {testResult.provider}/{testResult.model}
+                        {fmt(t('llm.testFailed'), { provider: testResult.provider, model: testResult.model })}
                         {testResult.error ? <div className="break-all text-red-700 dark:text-red-400">{testResult.error}</div> : null}
                       </>
                     )}
@@ -474,7 +482,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)} className="border-stone-300 text-[13px]">
-            取消
+            {t('llm.cancel')}
           </Button>
           <Button
             onClick={() => void save()}
@@ -482,7 +490,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             className="bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-[13px] text-amber-50 hover:from-[#8f3c0c]"
           >
             {saving ? <Loader2 size={13} className="animate-spin" /> : null}
-            保存配置
+            {t('llm.save')}
           </Button>
         </DialogFooter>
       </DialogContent>

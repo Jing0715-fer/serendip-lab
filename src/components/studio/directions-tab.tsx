@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { citationLabel, resolveCitationUrl } from '@/lib/citation';
 import { useStudio } from '@/store/studio';
+import { fmt, localeOf, useI18n, useT } from '@/lib/i18n';
 import type { ResearchDirection } from '@/lib/types';
 
 function ScoreDots({ label, value, tone }: { label: string; value: number; tone: string }) {
@@ -27,6 +28,7 @@ function ScoreDots({ label, value, tone }: { label: string; value: number; tone:
 function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
   const nodes = useStudio((s) => s.nodes);
   const openInspector = useStudio((s) => s.openInspector);
+  const t = useT();
 
   const refNodes = d.evidenceRefs
     .map((ref) => nodes.find((n) => n.title === ref || n.title.includes(ref) || ref.includes(n.title)))
@@ -40,9 +42,9 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
           {rank}
         </span>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
-          <ScoreDots label="新颖" value={d.scores.novelty} tone="bg-[#b45309]" />
-          <ScoreDots label="可行" value={d.scores.feasibility} tone="bg-emerald-600" />
-          <ScoreDots label="影响" value={d.scores.impact} tone="bg-[#b91c1c]" />
+          <ScoreDots label={t('dir.novelty')} value={d.scores.novelty} tone="bg-[#b45309]" />
+          <ScoreDots label={t('dir.feasibility')} value={d.scores.feasibility} tone="bg-emerald-600" />
+          <ScoreDots label={t('dir.impact')} value={d.scores.impact} tone="bg-[#b91c1c]" />
         </div>
       </div>
       <h3 className="mb-1.5 font-display text-[15px] font-bold leading-snug text-stone-800 dark:text-stone-100">{d.title}</h3>
@@ -54,7 +56,7 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
       {refNodes.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-1.5 border-t border-stone-200/70 pt-2 dark:border-stone-700/60">
           <Link2 size={11} className="text-stone-400" />
-          <span className="text-[10.5px] text-stone-400">证据锚点：</span>
+          <span className="text-[10.5px] text-stone-400">{t('dir.anchors')}</span>
           {refNodes.map((n) => (
             <button
               key={n.id}
@@ -71,19 +73,19 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
       {d.plan && (
         <div className="space-y-3 rounded-xl border border-amber-800/15 bg-[#faf5ea]/80 p-3 dark:border-amber-500/15 dark:bg-amber-950/15">
           <div className="flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-[#8a380c] dark:text-amber-400">
-            <Target size={11} /> 研究计划
+            <Target size={11} /> {t('dir.plan')}
           </div>
 
           {d.plan.objective && (
             <div>
-              <div className="mb-0.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">研究目标</div>
+              <div className="mb-0.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">{t('dir.objective')}</div>
               <p className="text-[12.5px] font-medium leading-relaxed text-stone-800 dark:text-stone-100">{d.plan.objective}</p>
             </div>
           )}
 
           {d.plan.keyQuestions.length > 0 && (
             <div>
-              <div className="mb-1 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">关键问题</div>
+              <div className="mb-1 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">{t('dir.keyQuestions')}</div>
               <ul className="space-y-1">
                 {d.plan.keyQuestions.map((q, i) => (
                   <li key={i} className="flex gap-1.5 text-[12px] leading-relaxed text-stone-700 dark:text-stone-200">
@@ -97,7 +99,7 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
 
           {d.plan.approach.length > 0 && (
             <div>
-              <div className="mb-1.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">实施路线</div>
+              <div className="mb-1.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">{t('dir.approach')}</div>
               <ol className="relative space-y-2.5 border-l-2 border-dashed border-amber-800/25 pl-4 dark:border-amber-500/25">
                 {d.plan.approach.map((s, i) => (
                   <li key={i} className="relative">
@@ -121,7 +123,7 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
 
           {d.plan.methods.length > 0 && (
             <div>
-              <div className="mb-1 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">方法与资源</div>
+              <div className="mb-1 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">{t('dir.methods')}</div>
               <div className="flex flex-wrap gap-1.5">
                 {d.plan.methods.map((m, i) => (
                   <span
@@ -138,7 +140,7 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
           {d.plan.expectedOutcome && (
             <div className="rounded-lg border border-emerald-700/20 bg-emerald-50/60 px-2.5 py-2 dark:border-emerald-700/30 dark:bg-emerald-950/20">
               <div className="mb-0.5 flex items-center gap-1 text-[10.5px] font-semibold text-emerald-800 dark:text-emerald-400">
-                <FlaskConical size={10} /> 预期产出
+                <FlaskConical size={10} /> {t('dir.outcome')}
               </div>
               <p className="text-[12px] leading-relaxed text-emerald-900 dark:text-emerald-200">{d.plan.expectedOutcome}</p>
             </div>
@@ -146,7 +148,7 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
 
           {d.plan.risks && (
             <div>
-              <div className="mb-0.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">风险与对策</div>
+              <div className="mb-0.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">{t('dir.risks')}</div>
               <p className="text-[11.5px] leading-relaxed text-stone-600 dark:text-stone-300">{d.plan.risks}</p>
             </div>
           )}
@@ -156,7 +158,7 @@ function DirectionCard({ d, rank }: { d: ResearchDirection; rank: number }) {
       {/* 文献（可点击打开原文） */}
       {d.literature.length > 0 && (
         <div className="mt-3 border-t border-stone-200/70 pt-2.5 dark:border-stone-700/60">
-          <div className="mb-1.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">深读文献</div>
+          <div className="mb-1.5 text-[10.5px] font-semibold text-stone-500 dark:text-stone-400">{t('dir.literature')}</div>
           <ul className="space-y-1.5">
             {d.literature.map((l, i) => {
               const url = resolveCitationUrl(l.ref, null);
@@ -193,6 +195,8 @@ export function DirectionsTab() {
   const directionsBusy = useStudio((s) => s.directionsBusy);
   const nodeCount = useStudio((s) => s.nodes.length);
   const generate = useStudio((s) => s.generateDirections);
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   // 生成中：审阅动画
   if (directionsBusy && !directions) {
@@ -202,10 +206,9 @@ export function DirectionsTab() {
           <Compass size={26} className="animate-pulse text-[#a3450f] dark:text-amber-500" />
           <span className="absolute inset-0 animate-ping rounded-full border border-[#a3450f]/20" />
         </div>
-        <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">首席战略顾问正在审阅证据链…</div>
+        <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">{t('dir.busyTitle')}</div>
         <p className="max-w-[360px] text-[12.5px] leading-relaxed text-stone-400">
-          Serendip 会把整面证据墙——问题、假说、证据与矛盾——重新过一遍，提炼 3-4 个值得深挖的研究方向，并为每个方向制定完整研究计划。
-          通常需要 30-90 秒，完成后自动出现在这里。
+          {t('dir.busyBody')}
         </p>
         <Loader2 size={16} className="animate-spin text-stone-400" />
       </div>
@@ -220,10 +223,9 @@ export function DirectionsTab() {
         <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-stone-300 text-stone-300 dark:border-stone-700">
           <Compass size={22} />
         </div>
-        <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">还没有深研方向</div>
+        <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">{t('dir.emptyTitle')}</div>
         <p className="max-w-[380px] text-[12.5px] leading-relaxed text-stone-400">
-          结案之后，让 Serendip 站在 PI 的视角审视证据链：从矛盾、例外与缺口中提炼值得深入研究的方向，
-          每个方向附目标、关键问题、分阶段路线与深读文献。
+          {t('dir.emptyBody')}
         </p>
         <Button
           onClick={() => void generate()}
@@ -231,10 +233,10 @@ export function DirectionsTab() {
           className="mt-1 gap-1.5 bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-[13px] text-amber-50 hover:from-[#8f3c0c]"
         >
           <Sparkles size={13} />
-          {tooFew ? `证据不足（${nodeCount}/3 节点）` : '从证据链提炼深研方向'}
+          {tooFew ? fmt(t('dir.tooFew'), { n: nodeCount }) : t('dir.emptyButton')}
         </Button>
         {tooFew && (
-          <p className="max-w-[300px] text-[10.5px] leading-relaxed text-stone-400">先让 Serendip 完成至少一轮自主调查，证据墙上有素材后再来提炼。</p>
+          <p className="max-w-[300px] text-[10.5px] leading-relaxed text-stone-400">{t('dir.tooFewHint')}</p>
         )}
       </div>
     );
@@ -246,9 +248,9 @@ export function DirectionsTab() {
       <div className="mx-auto max-w-[720px]">
         <div className="mb-4 rounded-2xl border border-amber-700/25 bg-gradient-to-b from-[#fdf3d7]/90 to-[#faecc8]/70 p-3.5 shadow-sm dark:border-amber-600/25 dark:from-amber-950/40 dark:to-amber-900/20">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-[#8a380c] dark:text-amber-400">
-            <Compass size={12} /> 深研方向 · 从证据链提炼
+            <Compass size={12} /> {t('dir.resultHeader')}
             <span className="ml-auto font-normal text-stone-500 dark:text-stone-400">
-              {new Date(directions.generatedAt).toLocaleString('zh-CN', { hour12: false })}
+              {new Date(directions.generatedAt).toLocaleString(localeOf(lang), { hour12: false })}
             </span>
           </div>
           {directions.summary && (
@@ -262,12 +264,12 @@ export function DirectionsTab() {
             className="mt-2 h-7 gap-1 border-amber-700/30 bg-white/60 text-[11.5px] text-stone-700 hover:bg-white dark:border-amber-600/30 dark:bg-stone-800/60 dark:text-stone-200"
           >
             {directionsBusy ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
-            重新提炼
+            {t('dir.regenerate')}
           </Button>
         </div>
 
         <div className="mb-1 text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">
-          SERENDIP 的建议 · 供选题参考，最终判断权在你
+          {t('dir.disclaimer')}
         </div>
         <div className="grid gap-3 pb-6">
           {directions.directions.map((d, i) => (

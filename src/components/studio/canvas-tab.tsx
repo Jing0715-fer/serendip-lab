@@ -1,10 +1,11 @@
 'use client';
 
-// canvas-tab.tsx — 证据墙标签页：EvidenceBoard + 添加线索 + 节点检视
+// canvas-tab.tsx — 证据墙标签页：EvidenceBoard + 添加素材 + 节点检视（Task 13 双语）
 import dynamic from 'next/dynamic';
-import { MapPin, Plus } from 'lucide-react';
+import { MapPin, Microscope, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStudio } from '@/store/studio';
+import { fmt, useT } from '@/lib/i18n';
 import { AddClueDialog } from './add-clue-dialog';
 import { NodeInspector } from './node-inspector';
 
@@ -16,12 +17,17 @@ const EvidenceBoard = dynamic(
       <div className="flex h-full w-full items-center justify-center bg-[#d9c3a5]">
         <div className="flex flex-col items-center gap-2 text-stone-600">
           <MapPin size={22} className="animate-bounce" />
-          <span className="text-[12px] tracking-wider">正在展开软木板…</span>
+          <span className="text-[12px] tracking-wider"><CanvasLoadingText /></span>
         </div>
       </div>
     ),
   }
 );
+
+function CanvasLoadingText() {
+  const t = useT();
+  return <>{t('canvas.loading')}</>;
+}
 
 export function CanvasTab() {
   const nodes = useStudio((s) => s.nodes);
@@ -30,16 +36,17 @@ export function CanvasTab() {
   const openInspector = useStudio((s) => s.openInspector);
   const saveLayout = useStudio((s) => s.saveLayout);
   const setAddClue = useStudio((s) => s.setAddClue);
+  const t = useT();
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* 画布工具条 */}
       <div className="flex items-center gap-2 border-b border-stone-300/60 bg-[#f7f4ee]/80 px-3 py-1.5 dark:border-stone-800 dark:bg-[#171411]/80">
         <span className="text-[11px] tracking-wider text-stone-500 dark:text-stone-400">
-          {nodes.length} 张卡片 · {edges.length} 条线索
+          {fmt(t('canvas.count'), { n: nodes.length, m: edges.length })}
         </span>
         <span className="hidden text-[10.5px] text-stone-400 sm:inline">
-          拖动卡片可重新排布 · 点击卡片查看证据详情
+          {t('canvas.hint')}
         </span>
         <Button
           size="sm"
@@ -48,7 +55,7 @@ export function CanvasTab() {
           onClick={() => setAddClue(true)}
         >
           <Plus size={13} />
-          添加线索
+          {t('canvas.addNote')}
         </Button>
       </div>
 
@@ -57,13 +64,13 @@ export function CanvasTab() {
           <div className="flex h-full w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-[#b09468] bg-[#d9c3a5]/60 dark:border-[#4d4030] dark:bg-[#241d15]/60">
             <div className="flex flex-col items-center gap-3 px-6 text-center">
               <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-[#8a6f45] text-2xl">
-                🕵️
+                <Microscope size={24} className="text-[#8a6f45]" />
               </div>
               <div className="font-display text-[16px] font-bold text-[#6b522e] dark:text-[#c9b28a]">
-                证据墙空空如也
+                {t('canvas.emptyTitle')}
               </div>
-              <p className="max-w-[360px] text-[12.5px] leading-relaxed text-[#8a6f45] dark:text-[#a08b66]">
-                先在对谈室和 Serendip 聊聊你的好奇心；进入自主调查后，侦探检索到的文献证据、假说与洞见会被一张张钉到这里，并用红绳串起它们的关系。
+              <p className="max-w-[380px] text-[12.5px] leading-relaxed text-[#8a6f45] dark:text-[#a08b66]">
+                {t('canvas.emptyBody')}
               </p>
             </div>
           </div>

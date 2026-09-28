@@ -18,9 +18,9 @@ const RANK_BY_KIND: Record<NodeKind, number> = {
   source: 3,
 };
 
-// 节点包围盒估算：卡片宽 210px + 出入把手余量；高度取卡片典型渲染高度
-const NODE_W = 250;
-const NODE_H = 168;
+// 节点包围盒估算：卡片宽 244px（Task 13 详情增强）+ 出入把手余量；高度取卡片典型渲染高度（含解读节选）
+const NODE_W = 284;
+const NODE_H = 232;
 const NODESEP = 36;
 const RANKSEP = 140;
 

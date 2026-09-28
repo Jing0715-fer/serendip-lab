@@ -17,6 +17,7 @@ import {
 } from './db'
 import { llmJson } from './llm'
 import { DIRECTIONS_PROMPT } from './prompts'
+import { getSessionLang, langDirective, noticeFor } from './lang'
 
 const running = new Set<string>()
 
@@ -30,28 +31,29 @@ export function buildBriefing(sessionId: string): string | null {
   if (!row) return null
   const nodes = listNodes(sessionId)
   if (nodes.length < 3) return null
+  const lang = getSessionLang(sessionId)
 
   const titleOf = (id: string) => nodes.find((n) => n.id === id)?.title || id
   const lines: string[] = []
 
-  lines.push(`# 案件：${row.title}（当前阶段 ${row.phase}）`)
+  lines.push(lang === 'en' ? `# Project: ${row.title} (phase ${row.phase})` : `# 课题：${row.title}（当前阶段 ${row.phase}）`)
   lines.push('')
 
   const questions = nodes.filter((n) => n.kind === 'question')
   if (questions.length) {
-    lines.push('# 核心问题')
+    lines.push(lang === 'en' ? '# Core question' : '# 核心问题')
     for (const q of questions) lines.push(`- ${q.title}${q.content ? `：${q.content}` : ''}`)
     lines.push('')
   }
 
   const hypotheses = nodes.filter((n) => n.kind === 'hypothesis')
   if (hypotheses.length) {
-    lines.push('# 待验证假说')
+    lines.push(lang === 'en' ? '# Hypotheses to test' : '# 待验证假说')
     for (const h of hypotheses) lines.push(`- ${h.title}${h.content ? `：${h.content}` : ''}`)
     lines.push('')
   }
 
-  lines.push('# 证据墙（全部节点）')
+  lines.push(lang === 'en' ? '# Evidence wall (all nodes)' : '# 证据墙（全部节点）')
   for (const n of nodes) {
     lines.push(`[${n.kind}] ${n.title}`)
     if (n.content) lines.push(`  ${n.content}`)
@@ -62,7 +64,7 @@ export function buildBriefing(sessionId: string): string | null {
 
   const edges = listEdges(sessionId)
   if (edges.length) {
-    lines.push('# 证据关系')
+    lines.push(lang === 'en' ? '# Evidence relations' : '# 证据关系')
     for (const e of edges) {
       lines.push(`${titleOf(e.source)} --${e.relation}--> ${titleOf(e.target)}${e.label ? `（${e.label}）` : ''}`)
     }
@@ -70,14 +72,14 @@ export function buildBriefing(sessionId: string): string | null {
   }
 
   if (row.narrative) {
-    lines.push('# 案情综述（节选）')
+    lines.push(lang === 'en' ? '# Research review (excerpt)' : '# 研究综述（节选）')
     lines.push(row.narrative.slice(0, 2200))
     lines.push('')
   }
 
   const qs = listQuestions(sessionId)
   if (qs.length) {
-    lines.push('# 已评估的问题清单（含打分）')
+    lines.push(lang === 'en' ? '# Scored question list' : '# 已评估的问题清单（含打分）')
     for (const q of qs) {
       const s = q.scores || {}
       lines.push(`- ${q.text}（新颖 ${s.novelty ?? '?'}/5 · 可行 ${s.feasibility ?? '?'}/5 · 影响 ${s.impact ?? '?'}/5${q.recommended ? ' · 已推荐' : ''}）`)
@@ -85,7 +87,13 @@ export function buildBriefing(sessionId: string): string | null {
     lines.push('')
   }
 
-  lines.push('请从以上证据链中提炼 3-4 个值得深入研究的方向，并为每个方向制定完整研究计划（严格按系统指令的 JSON 格式输出）。')
+  lines.push(
+    lang === 'en'
+      ? 'Distill 3-4 research-worthy directions from the evidence chain above, each with a complete research plan (strict JSON per the system instructions).'
+      : '请从以上证据链中提炼 3-4 个值得深入研究的方向，并为每个方向制定完整研究计划（严格按系统指令的 JSON 格式输出）。'
+  )
+  lines.push('')
+  lines.push(langDirective(lang))
   return lines.join('\n')
 }
 
@@ -182,12 +190,13 @@ export async function generateDirections(sessionId: string): Promise<{ ok: boole
   const briefing = buildBriefing(sessionId)
   if (!briefing) return { ok: false, error: '证据链简报组装失败' }
 
+  const lang = getSessionLang(sessionId)
   running.add(sessionId)
-  console.log(`[directions] start session=${sessionId} nodes=${nodes.length}`)
+  console.log(`[directions] start session=${sessionId} nodes=${nodes.length} lang=${lang}`)
   void (async () => {
     const started = Date.now()
     try {
-      insertActivity(sessionId, { type: 'notice', summary: '首席战略顾问开始审阅证据链，提炼深研方向…' })
+      insertActivity(sessionId, { type: 'notice', summary: noticeFor(lang, 'reviewStart') })
       const out = await llmJson(DIRECTIONS_PROMPT, briefing, undefined, { face: 'synthesizer' })
       if (!out.ok) throw new Error(out.error)
       const dirs = normalizeDirections(out.value)
@@ -197,13 +206,16 @@ export async function generateDirections(sessionId: string): Promise<{ ok: boole
       touchSession(sessionId)
       insertActivity(sessionId, {
         type: 'notice',
-        summary: `深研方向已生成：${dirs.directions.length} 个方向 · ${Math.round((Date.now() - started) / 1000)}s`,
+        summary: `${noticeFor(lang, 'directionsDone')}：${dirs.directions.length} · ${Math.round((Date.now() - started) / 1000)}s`,
         ok: true,
       })
       const msg = insertMessage(sessionId, {
         role: 'assistant',
         kind: 'notice',
-        content: `已从证据链提炼出 ${dirs.directions.length} 个深研方向${dirs.summary ? `：${dirs.summary}` : ''}——工作台「深研方向」标签页查看完整研究计划。`,
+        content: noticeFor(lang, 'directionsChatPrefix', {
+          n: String(dirs.directions.length),
+          summary: dirs.summary ? (lang === 'en' ? `: ${dirs.summary}` : `：${dirs.summary}`) : '',
+        }),
       })
       broadcast(sessionId, 'message', msg)
       broadcast(sessionId, 'directions', dirs)
@@ -211,8 +223,8 @@ export async function generateDirections(sessionId: string): Promise<{ ok: boole
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e)
       console.error(`[directions] failed session=${sessionId}:`, message)
-      insertActivity(sessionId, { type: 'notice', summary: `深研方向生成失败：${message}`, ok: false })
-      broadcast(sessionId, 'error', { message: `深研方向生成失败: ${message}` })
+      insertActivity(sessionId, { type: 'notice', summary: `${noticeFor(lang, 'directionsFailed')}：${message}`, ok: false })
+      broadcast(sessionId, 'error', { message: `${noticeFor(lang, 'directionsFailed')}: ${message}` })
     } finally {
       running.delete(sessionId)
     }

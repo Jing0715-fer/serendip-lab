@@ -1,6 +1,6 @@
 'use client';
 
-// research-dialog.tsx — 启动自主调查：聚焦点 + 预算设置
+// research-dialog.tsx — 启动自主研究：聚焦点 + 预算设置（Task 13 双语）
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { FlaskConical, Loader2, Timer, Zap } from 'lucide-react';
@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
+import { fmt, useI18n, useT } from '@/lib/i18n';
 
-const STEP_OPTIONS = [
-  { value: 24, label: '快速摸底', hint: '约 24 步 · 5 分钟' },
-  { value: 40, label: '标准调查', hint: '约 40 步 · 15 分钟' },
-  { value: 80, label: '深挖模式', hint: '约 80 步 · 30 分钟' },
+const STEP_OPTIONS: { value: number; label: { zh: string; en: string }; hint: { zh: string; en: string } }[] = [
+  { value: 24, label: { zh: '快速摸底', en: 'Quick scan' }, hint: { zh: '约 24 步 · 5 分钟', en: '~24 steps · 5 min' } },
+  { value: 40, label: { zh: '标准调研', en: 'Standard' }, hint: { zh: '约 40 步 · 15 分钟', en: '~40 steps · 15 min' } },
+  { value: 80, label: { zh: '深度调研', en: 'Deep dive' }, hint: { zh: '约 80 步 · 30 分钟', en: '~80 steps · 30 min' } },
 ];
 
 export function ResearchDialog() {
@@ -26,6 +27,8 @@ export function ResearchDialog() {
   const [steps, setSteps] = useState(40);
   const [minutes, setMinutes] = useState(15);
   const [busy, setBusy] = useState(false);
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   const continuing = nodes.length > 0 || narrative.length > 0;
 
@@ -37,10 +40,10 @@ export function ResearchDialog() {
         maxSteps: steps,
         maxMinutes: minutes,
       });
-      toast.success(continuing ? '新一轮调查已启动，侦探正在部署…' : '调查已启动，侦探正在部署…');
+      toast.success(continuing ? t('rd.continued') : t('rd.started'));
       setFocus('');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '启动失败');
+      toast.error(e instanceof Error ? e.message : t('rd.failed'));
     } finally {
       setBusy(false);
     }
@@ -52,30 +55,30 @@ export function ResearchDialog() {
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2 text-[15px] text-stone-800 dark:text-stone-100">
             <FlaskConical size={15} className="text-[#a3450f]" />
-            {continuing ? '继续自主调查' : '启动自主调查'}
+            {continuing ? t('rd.continue') : t('rd.start')}
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           {continuing && (
             <p className="rounded-xl border border-amber-700/30 bg-[#fdf3d7] px-3 py-2.5 text-[12px] leading-relaxed text-amber-900 dark:border-amber-600/30 dark:bg-amber-950/40 dark:text-amber-200">
-              侦探将基于当前证据墙（{nodes.length} 张卡片）与既有结论继续排查，而不是从头再来。
+              {fmt(t('rd.continuingNote'), { n: nodes.length })}
             </p>
           )}
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-              <Zap size={12} className="text-amber-700" /> 本轮聚焦点（可选）
+              <Zap size={12} className="text-amber-700" /> {t('rd.focus')}
             </div>
             <Textarea
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
-              placeholder="留给侦探的指示，如：重点验证 H1 假说 / 检索近三年 CRISPR 脱靶研究 / 我的实验室有帕金森患者宏基因组数据可接入…"
+              placeholder={t('rd.focusPh')}
               rows={3}
               className="studio-scroll min-h-[64px] border-stone-300 bg-white/70 text-[13px] dark:border-stone-700 dark:bg-stone-800/70"
             />
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
-              <Timer size={12} className="text-amber-700" /> 调查预算
+              <Timer size={12} className="text-amber-700" /> {t('rd.budget')}
             </div>
             <div className="grid grid-cols-3 gap-2">
               {STEP_OPTIONS.map((o) => (
@@ -93,20 +96,20 @@ export function ResearchDialog() {
                   )}
                 >
                   <div className={cn('text-[12.5px] font-semibold', steps === o.value ? 'text-[#8a380c] dark:text-amber-300' : 'text-stone-700 dark:text-stone-200')}>
-                    {o.label}
+                    {o.label[lang]}
                   </div>
-                  <div className="text-[10.5px] text-stone-400">{o.hint}</div>
+                  <div className="text-[10.5px] text-stone-400">{o.hint[lang]}</div>
                 </button>
               ))}
             </div>
             <p className="text-[11px] leading-relaxed text-stone-400">
-              调查期间你可随时补充线索（steering）或暂停；侦探遇到只有你知道的关键信息时会主动提问。
+              {t('rd.budgetNote')}
             </p>
           </div>
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={() => setOpen(false)} className="border-stone-300 text-[13px]">
-            取消
+            {t('rd.cancel')}
           </Button>
           <Button
             onClick={() => void launch()}
@@ -114,7 +117,7 @@ export function ResearchDialog() {
             className="bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-[13px] text-amber-50 hover:from-[#8f3c0c]"
           >
             {busy ? <Loader2 size={14} className="animate-spin" /> : <FlaskConical size={13} />}
-            派出侦探
+            {t('rd.launch')}
           </Button>
         </DialogFooter>
       </DialogContent>

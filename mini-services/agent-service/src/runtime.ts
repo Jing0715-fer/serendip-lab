@@ -11,6 +11,7 @@ import {
 } from './db'
 import { llmJson } from './llm'
 import { INTERVIEWER_PROMPT, PLANNER_PROMPT, SYNTHESIZER_PROMPT, buildInvestigatorPrompt } from './prompts'
+import { getSessionLang, langDirective, noticeFor, type Lang } from './lang'
 import { findExternalTool, toolsDoc } from './tools'
 import { uuid, now, truncObs, oneLine, clamp, sleep } from './util'
 
@@ -20,6 +21,9 @@ const EXTERNAL_TOOL_NAMES = [
   'clinvar_search', 'web_search', 'web_read',
 ]
 const GRAPH_TOOL_NAMES = ['add_evidence', 'link_evidence', 'update_evidence', 'note_gap', 'ask_user', 'finish_task']
+
+/** 默认会话标题（任何一种都允许被 title_suggestion 覆盖） */
+const DEFAULT_SESSION_TITLES = ['新调查', '新课题', 'New Project']
 
 type ScratchEntry = { thought: string; action: { tool: string; args: any }; observation: string }
 
@@ -66,7 +70,7 @@ function wallSummary(sessionId: string): string {
 }
 
 function serializeScratchpad(pad: ScratchEntry[]): string {
-  if (!pad.length) return '（调查刚刚开始，尚无历史观察）'
+  if (!pad.length) return '（研究刚刚开始，尚无历史观察）'
   const full = pad.slice(-14)
   const early = pad.slice(0, Math.max(0, pad.length - 14))
   const lines: string[] = []
@@ -130,7 +134,7 @@ export class AgentRuntime {
     }
     const row = getSessionRow(this.sessionId)
     broadcast(this.sessionId, 'phase', { phase: row?.phase, status })
-    insertActivity(this.sessionId, { type: 'phase', summary: `阶段切换 → ${row?.phase ?? '?'} / ${status}` })
+    insertActivity(this.sessionId, { type: 'phase', summary: `→ ${row?.phase ?? '?'} / ${status}` })
   }
 
   private emitState() {
@@ -195,7 +199,7 @@ export class AgentRuntime {
     if (this.userAnswerResolve) {
       const r = this.userAnswerResolve
       this.userAnswerResolve = null
-      r('（用户已停止调查）')
+      r(getSessionLang(this.sessionId) === 'en' ? '(user stopped the research)' : '（用户已停止研究）')
     }
   }
 
@@ -233,7 +237,7 @@ export class AgentRuntime {
       reason = await this.mainLoop(focus)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
-      insertActivity(this.sessionId, { type: 'notice', summary: `调查异常终止: ${msg}`, ok: false })
+      insertActivity(this.sessionId, { type: 'notice', summary: `研究异常终止: ${msg}`, ok: false })
       broadcast(this.sessionId, 'error', { message: msg })
       this.setPhase(null, 'error')
       this.running = false
@@ -249,8 +253,12 @@ export class AgentRuntime {
       console.error('[final-synthesize]', e)
     }
     this.setPhase('done', 'done')
-    const summary = synth?.message_to_user || '本轮调查结束。'
-    insertMessage(this.sessionId, { role: 'system', kind: 'notice', content: `调查结束（${reason === 'budget' ? '预算已用尽' : reason === 'stopped' ? '用户停止' : '任务完成'}）：${summary}` })
+    const runLang = getSessionLang(this.sessionId)
+    const summary = synth?.message_to_user || (runLang === 'en' ? 'This research run has ended.' : '本轮研究结束。')
+    const reasonText = runLang === 'en'
+      ? (reason === 'budget' ? 'budget exhausted' : reason === 'stopped' ? 'stopped by user' : 'completed')
+      : (reason === 'budget' ? '预算已用尽' : reason === 'stopped' ? '用户停止' : '任务完成')
+    insertMessage(this.sessionId, { role: 'system', kind: 'notice', content: runLang === 'en' ? `Research run ended (${reasonText}): ${summary}` : `研究结束（${reasonText}）：${summary}` })
     const noticeMsg = listMessages(this.sessionId).filter((m) => m.kind === 'notice').pop()
     if (noticeMsg) this.emitMessage(noticeMsg)
     broadcast(this.sessionId, 'done', { reason, summary })
@@ -324,7 +332,7 @@ export class AgentRuntime {
           if (llmFails >= 5) {
             this.paused = true
             this.setPhase(null, 'paused')
-            broadcast(this.sessionId, 'error', { message: '连续 5 次 LLM 调用失败，调查已熔断暂停。可稍后 POST /control {action:"resume"} 恢复。' })
+            broadcast(this.sessionId, 'error', { message: getSessionLang(this.sessionId) === 'en' ? '5 consecutive LLM failures — the run is paused. POST /control {action:"resume"} to recover.' : '连续 5 次 LLM 调用失败，研究已熔断暂停。可稍后 POST /control {action:"resume"} 恢复。' })
             return
           }
           continue
@@ -341,7 +349,7 @@ export class AgentRuntime {
         if (parseFails >= 3) {
           this.paused = true
           this.setPhase(null, 'paused')
-          broadcast(this.sessionId, 'error', { message: '连续 3 步输出解析失败，调查已熔断暂停。可 POST /control {action:"resume"} 恢复。' })
+          broadcast(this.sessionId, 'error', { message: getSessionLang(this.sessionId) === 'en' ? '3 consecutive parse failures — the run is paused. POST /control {action:"resume"} to recover.' : '连续 3 步输出解析失败，研究已熔断暂停。可 POST /control {action:"resume"} 恢复。' })
           return
         }
         continue
@@ -409,7 +417,7 @@ export class AgentRuntime {
   private async runTool(toolName: string, args: any, step: number): Promise<unknown> {
     const callId = uuid()
     broadcast(this.sessionId, 'tool_call', { callId, tool: toolName, args, step })
-    insertActivity(this.sessionId, { type: 'tool_call', tool: toolName, summary: `调用 ${toolName} ${oneLine(JSON.stringify(args), 120)}`, step })
+    insertActivity(this.sessionId, { type: 'tool_call', tool: toolName, summary: `→ ${toolName} ${oneLine(JSON.stringify(args), 120)}`, step })
     const t0 = now()
     let obs: unknown
     try {
@@ -574,7 +582,7 @@ export class AgentRuntime {
     const meta = getMeta(this.sessionId)
     saveMeta(this.sessionId, { ...meta, pendingQuestion: question })
     this.setPhase('awaiting_user', 'awaiting_user')
-    insertActivity(this.sessionId, { type: 'notice', summary: `等待用户回答: ${oneLine(question, 150)}` })
+    insertActivity(this.sessionId, { type: 'notice', summary: `${getSessionLang(this.sessionId) === 'en' ? 'Awaiting your answer' : '等待用户回答'}: ${oneLine(question, 150)}` })
 
     const answer = await new Promise<string>((resolve) => {
       this.userAnswerResolve = resolve
@@ -600,10 +608,10 @@ export class AgentRuntime {
     if (!this.steeringQueue.length) return
     const items = this.steeringQueue.splice(0)
     for (const it of items) {
-      const msg = insertMessage(this.sessionId, { role: 'system', kind: 'steer_ack', content: `已纳入调查线索：${it.slice(0, 120)}` })
+      const msg = insertMessage(this.sessionId, { role: 'system', kind: 'steer_ack', content: getSessionLang(this.sessionId) === 'en' ? `Folded into the research context: ${it.slice(0, 120)}` : `已纳入研究素材：${it.slice(0, 120)}` })
       this.emitMessage(msg)
     }
-    insertActivity(this.sessionId, { type: 'notice', summary: `纳入 ${items.length} 条用户补充线索` })
+    insertActivity(this.sessionId, { type: 'notice', summary: `+${items.length} ${getSessionLang(this.sessionId) === 'en' ? 'user notes folded in' : '条用户补充素材已纳入'}` })
   }
 
   private steeringBlock(): string {
@@ -646,6 +654,7 @@ export class AgentRuntime {
       `【剩余预算】${this.remainingText()}`,
       focusBlock,
       '请输出严格 JSON 计划。',
+      langDirective(getSessionLang(this.sessionId)),
     ]
       .filter(Boolean)
       .join('\n\n')
@@ -698,7 +707,7 @@ export class AgentRuntime {
     }
     savePlan(this.sessionId, plan)
     broadcast(this.sessionId, 'plan', { plan })
-    insertActivity(this.sessionId, { type: 'notice', summary: `生成调查计划（${plan.tasks.length} 个任务）: ${oneLine(plan.focusQuestion, 150)}` })
+    insertActivity(this.sessionId, { type: 'notice', summary: `${noticeFor(getSessionLang(this.sessionId), 'planGenerated')}（${plan.tasks.length}）: ${oneLine(plan.focusQuestion, 150)}` })
     this.emitState()
     return plan
   }
@@ -721,8 +730,9 @@ export class AgentRuntime {
       toolsDoc: toolsDoc(true),
       remainingSteps: Math.max(0, b.maxSteps - b.stepsUsed),
       remainingMinutes: Math.max(0, Math.round((b.maxMinutes * 60_000 - (b.startedAt ? now() - b.startedAt : 0)) / 60_000)),
+      langDirective: langDirective(getSessionLang(this.sessionId)),
     })
-    const userPrompt = `# 调查历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence 落到证据墙（预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
+    const userPrompt = `# 研究历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence 落到证据墙（预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
     const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm(), { face: 'investigator' })
     if (!res.ok) {
       const isLlmFailure = /LLM (重试)?调用失败/.test(res.error)
@@ -751,13 +761,18 @@ export class AgentRuntime {
       `【证据节点】\n${nodes.map((n) => `- [${n.kind}] ${n.title}: ${n.content}${n.sourceRef ? ` [${n.sourceRef}]` : n.sourceUrl ? ` [${n.sourceUrl}]` : ''}${n.confidence != null ? ` (置信度 ${n.confidence})` : ''}`).join('\n') || '（无）'}`,
       `【证据关系】\n${edges.map((e) => `- ${titleOf(e.source)} --${e.relation}--> ${titleOf(e.target)}`).join('\n') || '（无）'}`,
       `【已完成任务小结】\n${doneTasks.map((t) => `- ${t.goal} → ${t.summary || '（无小结）'}`).join('\n') || '（无）'}`,
-      `【调查期间用户的补充消息】\n${steers.map((m) => `- ${m.content.slice(0, 300)}`).join('\n') || '（无）'}`,
-      final ? '这是本轮调查的最终结案陈词（调查即将结束），continue 请置 false。' : `这是阶段性综合。剩余预算：${this.remainingText()}。`,
+      `【研究期间用户的补充消息】\n${steers.map((m) => `- ${m.content.slice(0, 300)}`).join('\n') || '（无）'}`,
+      final
+        ? noticeFor(getSessionLang(this.sessionId), 'finalSynthesisNote')
+        : getSessionLang(this.sessionId) === 'en'
+          ? `This is an interim synthesis. Remaining budget: ${this.remainingText()}.`
+          : `这是阶段性综合。剩余预算：${this.remainingText()}。`,
       '请输出严格 JSON。',
+      langDirective(getSessionLang(this.sessionId)),
     ].join('\n\n')
 
     const res0 = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), { face: 'synthesizer' })
-    // 结案陈词是关键调用：退避重试（429 限流常见），最多 3 轮
+    // 研究综述是关键调用：退避重试（429 限流常见），最多 3 轮
     let res = res0
     if (!res.ok) {
       for (let i = 1; i <= 2; i++) {
@@ -824,7 +839,7 @@ export class AgentRuntime {
       const msg = insertMessage(this.sessionId, { role: 'assistant', kind: 'synthesis', content: String(v.message_to_user) })
       this.emitMessage(msg)
     }
-    insertActivity(this.sessionId, { type: 'notice', summary: `综合分析完成${final ? '（结案）' : '（阶段）'}` })
+    insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), final ? 'synthesisFinal' : 'synthesisStage') })
     this.emitState()
     return v
   }
@@ -847,7 +862,7 @@ export class AgentRuntime {
         .filter((m) => m.kind === 'chat' && (m.role === 'user' || m.role === 'assistant') && m.id !== userMsg.id)
         .slice(-24)
       const dialogue = history.map((m) => `${m.role}: ${m.content}`).join('\n')
-      const userPrompt = `【对话记录】\n${dialogue || '（无）'}\n\n【本次用户消息】\n${text}`
+      const userPrompt = `【对话记录】\n${dialogue || '（无）'}\n\n【本次用户消息】\n${text}\n\n${langDirective(getSessionLang(this.sessionId))}`
 
       // 3. LLM 调用
       const res = await llmJson<any>(INTERVIEWER_PROMPT, userPrompt, () => this.countLlm(), { face: 'interviewer' })
@@ -855,7 +870,7 @@ export class AgentRuntime {
         const errMsg = insertMessage(this.sessionId, {
           role: 'assistant',
           kind: 'notice',
-          content: '（访谈者思考暂时不可用，请稍后重试）',
+          content: noticeFor(getSessionLang(this.sessionId), 'interviewerUnavailable'),
         })
         this.emitMessage(errMsg)
         return errMsg
@@ -877,7 +892,7 @@ export class AgentRuntime {
 
       // ready 时更新会话标题（若仍是默认标题）
       const row = getSessionRow(this.sessionId)
-      if (ready && titleSuggestion && row && (row.title === '新调查' || !row.title)) {
+      if (ready && titleSuggestion && row && (DEFAULT_SESSION_TITLES.includes(row.title) || !row.title)) {
         updateSessionFields(this.sessionId, { title: titleSuggestion.slice(0, 80) })
       }
 

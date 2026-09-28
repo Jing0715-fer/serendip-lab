@@ -14,26 +14,28 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Serendip Lab · 生物科研灵感侦探",
+  title: "Serendip Lab · 生物科研灵感引擎 | Bio-research Inspiration Engine",
   description:
-    "与 AI 侦探对谈，把模糊的好奇心磨成值得研究的科学问题。Agent 自主检索 PubMed / OpenAlex / UniProt 等生物学数据库，把证据钉上侦探式证据墙，梳理成有逻辑的叙事与值得深挖的问题清单。",
+    "与 AI 科研合作助手对谈，把模糊的好奇心磨成值得研究的科学问题。Agent 自主检索 PubMed / OpenAlex / UniProt 等生物学数据库，把证据钉上证据墙，梳理成研究综述与值得深挖的问题清单。Chat with an AI research partner that turns fuzzy curiosity into researchable questions — an autonomous agent searches PubMed / OpenAlex / UniProt and pins evidence onto an evidence wall.",
   keywords: [
     "生物科研",
     "灵感发掘",
     "AI Agent",
     "证据墙",
+    "evidence wall",
     "苏格拉底提问",
     "文献调研",
     "PubMed",
     "科研选题",
+    "research ideation",
   ],
   authors: [{ name: "Serendip Lab" }],
   icons: {
     icon: "/serendip.svg",
   },
   openGraph: {
-    title: "Serendip Lab · 生物科研灵感侦探",
-    description: "AI 侦探帮你从好奇心出发，建立证据墙，找出值得深挖的科学问题。",
+    title: "Serendip Lab · 生物科研灵感引擎 | Bio-research Inspiration Engine",
+    description: "AI 科研合作助手帮你从好奇心出发建立证据墙，提炼值得深挖的科学问题。An AI research partner that builds an evidence wall from your curiosity.",
     siteName: "Serendip Lab",
     type: "website",
   },

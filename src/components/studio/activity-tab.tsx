@@ -1,32 +1,14 @@
 'use client';
 
-// activity-tab.tsx — 活动日志：Agent 每一步思考与工具调用的全程记录
+// activity-tab.tsx — 活动日志：Agent 每一步思考与工具调用的全程记录（Task 13 双语）
 import { Activity, BrainCircuit, CheckCircle2, ChevronRight, Wrench, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useStudio, fmtTime, fmtElapsed } from '@/store/studio';
+import { TOOL_LABEL, useI18n, useT } from '@/lib/i18n';
 import type { ActivityEvent } from '@/lib/types';
 
-const TOOL_LABEL: Record<string, string> = {
-  pubmed_search: 'PubMed 检索',
-  pubmed_fetch: 'PubMed 摘要精读',
-  europepmc_search: 'Europe PMC 检索',
-  openalex_search: 'OpenAlex 检索',
-  uniprot_search: 'UniProt 蛋白查询',
-  ncbi_gene: 'NCBI 基因查询',
-  pdb_search: 'PDB 结构检索',
-  taxonomy_search: 'Taxonomy 物种查询',
-  clinvar_search: 'ClinVar 变异检索',
-  web_search: 'Web 搜索',
-  web_read: '网页精读',
-  add_evidence: '钉上证据',
-  link_evidence: '连接红绳',
-  update_evidence: '更新证据',
-  note_gap: '记录空白',
-  ask_user: '向用户提问',
-  finish_task: '任务小结',
-};
-
 function EventRow({ ev }: { ev: ActivityEvent }) {
+  const lang = useI18n((s) => s.lang);
   let icon;
   let tone = 'text-stone-500';
   switch (ev.type) {
@@ -50,7 +32,7 @@ function EventRow({ ev }: { ev: ActivityEvent }) {
       icon = <Activity size={12} />;
   }
 
-  const toolLabel = ev.tool ? (TOOL_LABEL[ev.tool] ?? ev.tool) : null;
+  const toolLabel = ev.tool ? (TOOL_LABEL[ev.tool]?.[lang] ?? ev.tool) : null;
 
   return (
     <div className="flex gap-2.5 py-1.5">
@@ -86,6 +68,7 @@ function EventRow({ ev }: { ev: ActivityEvent }) {
 export function ActivityTab() {
   const activity = useStudio((s) => s.activity);
   const stats = useStudio((s) => s.stats);
+  const t = useT();
 
   const list = [...activity].reverse(); // 最新在上
 
@@ -95,10 +78,10 @@ export function ActivityTab() {
         {stats && (
           <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-stone-300/70 bg-white/60 p-3 text-center dark:border-stone-700 dark:bg-stone-800/50 sm:grid-cols-4">
             {[
-              { label: '调查步数', value: `${stats.stepsUsed}/${stats.maxSteps}` },
-              { label: '工具调用', value: String(stats.toolCalls) },
-              { label: 'LLM 推理', value: String(stats.llmCalls) },
-              { label: '证据节点', value: String(stats.evidenceCount + stats.sourceCount) },
+              { label: t('act.steps'), value: `${stats.stepsUsed}/${stats.maxSteps}` },
+              { label: t('act.toolCalls'), value: String(stats.toolCalls) },
+              { label: t('act.llmCalls'), value: String(stats.llmCalls) },
+              { label: t('act.evidence'), value: String(stats.evidenceCount + stats.sourceCount) },
             ].map((s) => (
               <div key={s.label}>
                 <div className="text-[16px] font-bold tabular-nums text-stone-800 dark:text-stone-100">{s.value}</div>
@@ -113,9 +96,9 @@ export function ActivityTab() {
             <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-stone-300 text-stone-300 dark:border-stone-700">
               <Activity size={22} />
             </div>
-            <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">暂无活动记录</div>
+            <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">{t('act.emptyTitle')}</div>
             <p className="max-w-[340px] text-[12.5px] leading-relaxed text-stone-400">
-              Agent 的每一步思考、每一次数据库检索、每一条证据落墙，都会在这里留下完整的时间线。
+              {t('act.emptyBody')}
             </p>
           </div>
         ) : (

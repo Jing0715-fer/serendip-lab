@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { agentApi } from '@/lib/agent-api';
+import { PHASE_LABEL, currentLang } from '@/lib/i18n';
 import type {
   ActivityEvent,
   AgentStatus,
@@ -206,7 +207,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   createSession: async (opts) => {
-    const r = await agentApi.createSession(opts);
+    const r = await agentApi.createSession({ lang: currentLang(), ...opts });
     await get().refreshSessions();
     await get().loadSession(r.session.id);
   },
@@ -247,7 +248,7 @@ export const useStudio = create<StudioState>((set, get) => ({
 
     const sessionId = s.session.id;
     try {
-      await agentApi.chat(sessionId, trimmed);
+      await agentApi.chat(sessionId, trimmed, currentLang());
     } catch (e) {
       if (optimistic) set({ messages: get().messages.filter((m) => m.id !== optimistic.id) });
       set({ interviewBusy: false });
@@ -270,7 +271,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   startResearch: async (opts) => {
     const s = get();
     if (!s.session) return;
-    await agentApi.research(s.session.id, opts);
+    await agentApi.research(s.session.id, { ...opts, lang: currentLang() });
     set({ researchDialogOpen: false, mobileView: 'workspace' });
   },
 
@@ -322,16 +323,24 @@ export const useStudio = create<StudioState>((set, get) => ({
     const s = get();
     if (!s.session || s.directionsBusy) return;
     if (s.nodes.length < 3) {
-      toast.error('证据墙节点太少——先让 Serendip 完成至少一轮调查，再来提炼深研方向');
+      toast.error(
+        currentLang() === 'zh'
+          ? '证据墙节点太少——先让 Serendip 完成至少一轮自主研究，再来提炼深研方向'
+          : 'Too few cards on the wall — finish an autonomous research run first'
+      );
       return;
     }
     const sid = s.session.id;
     set({ directionsBusy: true });
     try {
-      await agentApi.generateDirections(sid);
+      await agentApi.generateDirections(sid, currentLang());
     } catch (e) {
       set({ directionsBusy: false });
-      toast.error(`深研方向生成启动失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error(
+        currentLang() === 'zh'
+          ? `深研方向生成启动失败：${e instanceof Error ? e.message : String(e)}`
+          : `Failed to start path distillation: ${e instanceof Error ? e.message : String(e)}`
+      );
       return;
     }
     // SSE 掉线兑底：120s 后仍未收到 directions 事件 → 拉全量恢复
@@ -389,7 +398,7 @@ export const useStudio = create<StudioState>((set, get) => ({
             id: evtId('phase'),
             ts: Date.now(),
             type: 'phase',
-            summary: `阶段切换 → ${ev.phase} / ${ev.status}`,
+            summary: `→ ${PHASE_LABEL[ev.phase][currentLang()]} · ${ev.status}`,
           }),
         });
         if (ev.status === 'done' || ev.status === 'idle' || ev.status === 'error') {
@@ -419,7 +428,7 @@ export const useStudio = create<StudioState>((set, get) => ({
             type: 'tool_call',
             tool: ev.tool,
             step: ev.step,
-            summary: `调用 ${ev.tool}`,
+            summary: `→ ${ev.tool}`,
           }),
         });
         break;

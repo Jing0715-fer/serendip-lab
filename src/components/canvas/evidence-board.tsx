@@ -1,6 +1,6 @@
 'use client';
 
-// 侦探证据墙 · ReactFlow 完整封装（Task 2-b）
+// 证据墙画布 · ReactFlow 完整封装（Task 2-b → Task 13 双语）
 // 软木板 + 图钉便签 + 红绳连线；契约见 docs/ARCHITECTURE.md §10.2 / §10.3
 
 import '@xyflow/react/dist/style.css';
@@ -19,10 +19,14 @@ import { cn } from '@/lib/utils';
 import {
   EDGE_RELATION_LABEL,
   NODE_KIND_LABEL,
-  type BoardEdge,
-  type BoardNode,
-  type EdgeRelation,
-  type NodeKind,
+  useI18n,
+  useT,
+} from '@/lib/i18n';
+import type {
+  BoardEdge,
+  BoardNode,
+  EdgeRelation,
+  NodeKind,
 } from '@/lib/types';
 
 import { KIND_COLOR, nodeTypes, type BoardNodeData, type EvidenceFlowNode } from './board-nodes';
@@ -45,12 +49,14 @@ function BoardLegend() {
   const [open, setOpen] = useState(
     () => typeof window === 'undefined' || window.innerWidth >= 640
   );
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   return (
-    <aside className="ev-legend" aria-label="证据墙图例">
+    <aside className="ev-legend" aria-label={t('canvas.legend')}>
       <button type="button" className="ev-legend__toggle" onClick={() => setOpen((v) => !v)}>
         <span className="ev-legend__pin" aria-hidden="true" />
-        <span className="ev-legend__title">图例</span>
+        <span className="ev-legend__title">{t('canvas.legend')}</span>
         {open ? <ChevronUp size={12} aria-hidden="true" /> : <ChevronDown size={12} aria-hidden="true" />}
       </button>
 
@@ -60,7 +66,7 @@ function BoardLegend() {
             {(Object.keys(NODE_KIND_LABEL) as NodeKind[]).map((kind) => (
               <li key={kind}>
                 <span className="ev-swatch" style={{ background: KIND_COLOR[kind] }} />
-                {NODE_KIND_LABEL[kind]}
+                {NODE_KIND_LABEL[kind][lang]}
               </li>
             ))}
           </ul>
@@ -82,7 +88,7 @@ function BoardLegend() {
                       strokeLinecap="round"
                     />
                   </svg>
-                  {EDGE_RELATION_LABEL[rel]}
+                  {EDGE_RELATION_LABEL[rel][lang]}
                 </li>
               );
             })}
@@ -120,6 +126,7 @@ export function EvidenceBoard({
   onPositionsChange,
   className,
 }: EvidenceBoardProps) {
+  const t = useT();
   // position 为 null 的节点用 dagre 布局兜底
   const layout = useMemo(() => layoutBoard(nodes, edges), [nodes, edges]);
   const liveSet = useMemo(() => new Set(liveIds ?? []), [liveIds]);
@@ -231,7 +238,7 @@ export function EvidenceBoard({
         {/* 装饰：右下角落款橡皮章（非交互） */}
         <div className="ev-case-stamp" aria-hidden="true">
           <span className="ev-case-stamp__line1">SERENDIP LAB</span>
-          <span className="ev-case-stamp__line2">灵感侦探 · 证据档案</span>
+          <span className="ev-case-stamp__line2">{t('canvas.stamp')}</span>
         </div>
       </div>
     </div>

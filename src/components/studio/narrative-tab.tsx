@@ -1,12 +1,13 @@
 'use client';
 
-// narrative-tab.tsx — 案情综述（结案陈词 markdown）+ 调查计划进度 + 深研方向 CTA
+// narrative-tab.tsx — 研究综述（markdown）+ 研究计划进度 + 深研方向 CTA（Task 13 双语）
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CheckCircle2, Circle, Compass, ScrollText, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
+import { fmt, useT } from '@/lib/i18n';
 
 export function NarrativeTab() {
   const narrative = useStudio((s) => s.narrative);
@@ -15,15 +16,16 @@ export function NarrativeTab() {
   const directionsBusy = useStudio((s) => s.directionsBusy);
   const setWorkspaceTab = useStudio((s) => s.setWorkspaceTab);
   const generateDirections = useStudio((s) => s.generateDirections);
+  const t = useT();
 
   return (
     <div className="studio-scroll h-full overflow-y-auto bg-[#f7f4ee] px-4 py-4 dark:bg-[#171411] sm:px-6">
-      {/* 调查计划 */}
+      {/* 研究计划 */}
       {plan && plan.tasks.length > 0 && (
         <section className="mb-5 rounded-2xl border border-stone-300/70 bg-white/60 p-4 shadow-sm dark:border-stone-700 dark:bg-stone-800/50">
           <div className="mb-1 flex items-center gap-2">
             <span className="text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">
-              调查计划 · 第 {plan.round} 轮
+              {fmt(t('narrative.planTitle'), { n: plan.round })}
             </span>
           </div>
           <div className="mb-3 font-display text-[14px] font-bold leading-snug text-stone-800 dark:text-stone-100">
@@ -54,7 +56,7 @@ export function NarrativeTab() {
           </div>
           {plan.hypotheses.length > 0 && (
             <div className="mt-3 border-t border-stone-200/70 pt-2.5 dark:border-stone-700/60">
-              <div className="mb-1 text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">在办假说</div>
+              <div className="mb-1 text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">{t('narrative.hypotheses')}</div>
               <ul className="space-y-1 text-[12px] leading-relaxed text-stone-600 dark:text-stone-300">
                 {plan.hypotheses.map((h, i) => (
                   <li key={i} className="flex gap-1.5">
@@ -68,7 +70,7 @@ export function NarrativeTab() {
         </section>
       )}
 
-      {/* 案情综述 */}
+      {/* 研究综述 */}
       <section>
         {narrative ? (
           <article className="case-brief mx-auto max-w-[720px]">
@@ -79,9 +81,9 @@ export function NarrativeTab() {
             <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-stone-300 text-stone-300 dark:border-stone-700">
               <ScrollText size={22} />
             </div>
-            <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">尚无案情综述</div>
+            <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">{t('narrative.emptyTitle')}</div>
             <p className="max-w-[340px] text-[12.5px] leading-relaxed text-stone-400">
-              进入自主调查后，Serendip 会定期把碎片化的证据梳理成有逻辑的叙事——像侦探的结案陈词一样，从迷雾讲到证据链，再讲到值得深挖的问题。
+              {t('narrative.emptyBody')}
             </p>
           </div>
         )}
@@ -92,9 +94,9 @@ export function NarrativeTab() {
         <div className="mx-auto mt-6 mb-4 flex max-w-[720px] flex-col items-start gap-2 rounded-2xl border border-amber-700/25 bg-gradient-to-r from-[#fdf3d7]/90 to-[#faecc8]/60 p-4 shadow-sm sm:flex-row sm:items-center dark:border-amber-600/25 dark:from-amber-950/40 dark:to-amber-900/20">
           <Compass size={20} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
           <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-semibold text-stone-800 dark:text-stone-100">这些证据通向哪条研究路线？</div>
+            <div className="text-[13px] font-semibold text-stone-800 dark:text-stone-100">{t('narrative.ctaTitle')}</div>
             <p className="mt-0.5 text-[11.5px] leading-relaxed text-stone-500 dark:text-stone-400">
-              让 Serendip 从证据链提炼 3-4 个值得深入研究的方向，每个附完整研究计划。
+              {t('narrative.ctaBody')}
             </p>
           </div>
           <Button
@@ -107,7 +109,7 @@ export function NarrativeTab() {
             className="shrink-0 gap-1.5 bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-[12.5px] text-amber-50 hover:from-[#8f3c0c]"
           >
             <Sparkles size={12} />
-            提炼深研方向
+            {t('narrative.ctaButton')}
           </Button>
         </div>
       )}

@@ -1,6 +1,6 @@
 'use client';
 
-// chat-panel.tsx — 左侧对谈面板：苏格拉底访谈 + 调查直播 + steering 输入
+// chat-panel.tsx — 左侧对谈面板：苏格拉底访谈 + 研究直播 + steering 输入（Task 13 双语）
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -21,16 +21,26 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useStudio, isAgentWorking, fmtTime } from '@/store/studio';
+import { fmt, useI18n, useT } from '@/lib/i18n';
 import type { ChatMessage } from '@/lib/types';
 
-const SAMPLE_TOPICS = [
-  '为什么线粒体保留了自己的基因组？',
-  '肠道菌群如何影响神经退行性疾病？',
-  '衰老细胞为何能逃避免疫清除？',
-  '肿瘤细胞代谢重编程的可逆性如何？',
-];
+const SAMPLE_TOPICS: Record<'zh' | 'en', string[]> = {
+  zh: [
+    '为什么线粒体保留了自己的基因组？',
+    '肠道菌群如何影响神经退行性疾病？',
+    '衰老细胞为何能逃避免疫清除？',
+    '肿瘤细胞代谢重编程的可逆性如何？',
+  ],
+  en: [
+    'Why do mitochondria keep their own genome?',
+    'How does the gut microbiome shape neurodegeneration?',
+    'Why do senescent cells evade immune clearance?',
+    'How reversible is metabolic reprogramming in tumor cells?',
+  ],
+};
 
 function MessageItem({ msg }: { msg: ChatMessage }) {
+  const t = useT();
   if (msg.role === 'system') {
     return (
       <div className="my-1 flex justify-center px-6">
@@ -72,16 +82,16 @@ function MessageItem({ msg }: { msg: ChatMessage }) {
       >
         {isQuestion && (
           <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold tracking-wide text-amber-700 dark:text-amber-400">
-            <Sparkles size={11} /> 侦探需要你的线索
+            <Sparkles size={11} /> {t('chat.questionBadge')}
           </div>
         )}
         {isSynthesis && (
           <div className="mb-1 flex items-center gap-1 text-[11px] font-semibold tracking-wide text-emerald-700 dark:text-emerald-400">
-            <BrainCircuit size={11} /> 结案汇报
+            <BrainCircuit size={11} /> {t('chat.synthesisBadge')}
           </div>
         )}
         {isSteer && (
-          <div className="mb-0.5 text-[10.5px] font-medium tracking-wide text-amber-200/90">线索补充 · Agent 将在检查点纳入</div>
+          <div className="mb-0.5 text-[10.5px] font-medium tracking-wide text-amber-200/90">{t('chat.steerBadge')}</div>
         )}
         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
         <div className={cn('mt-1 text-right text-[10px] tabular-nums', isUser ? 'text-amber-100/60' : 'text-stone-400')}>
@@ -99,17 +109,18 @@ function LiveInvestigation() {
   const stats = useStudio((s) => s.stats);
   const setWorkspaceTab = useStudio((s) => s.setWorkspaceTab);
   const setMobileView = useStudio((s) => s.setMobileView);
+  const t = useT();
 
   return (
     <div className="mx-2 mb-2 overflow-hidden rounded-xl border border-stone-300/80 bg-white/70 shadow-sm dark:border-stone-700 dark:bg-stone-800/60">
       <div className="flex items-center gap-2 border-b border-stone-200/80 px-3 py-1.5 dark:border-stone-700/60">
         <Loader2 size={12} className="animate-spin text-emerald-700 dark:text-emerald-400" />
         <span className="text-[11px] font-semibold tracking-wider text-stone-600 dark:text-stone-300">
-          侦探工作中
+          {t('chat.liveTitle')}
         </span>
         {stats && (
           <span className="ml-auto text-[10px] tabular-nums text-stone-400">
-            {stats.stepsUsed}/{stats.maxSteps} 步
+            {fmt(t('chat.liveSteps'), { used: stats.stepsUsed, max: stats.maxSteps })}
           </span>
         )}
         <button
@@ -119,7 +130,7 @@ function LiveInvestigation() {
             setMobileView('workspace');
           }}
         >
-          全程记录 <ChevronRight size={10} />
+          {t('chat.liveLog')} <ChevronRight size={10} />
         </button>
       </div>
       <div className="space-y-2 px-3 py-2.5">
@@ -149,7 +160,7 @@ function LiveInvestigation() {
         )}
         {!toolRunning && !lastThought && (
           <div className="flex items-center gap-1.5 text-[12px] text-stone-400">
-            <Search size={12} /> 正在部署下一步行动…
+            <Search size={12} /> {t('chat.liveDeploying')}
           </div>
         )}
         {session?.status === 'awaiting_user' && null}
@@ -165,9 +176,12 @@ export function ChatPanel() {
   const sendChat = useStudio((s) => s.sendChat);
   const setResearchDialog = useStudio((s) => s.setResearchDialog);
   const connected = useStudio((s) => s.connected);
+  const stats = useStudio((s) => s.stats);
   const [draft, setDraft] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottom = useRef(true);
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   const working = isAgentWorking(session?.status);
   const awaiting = session?.status === 'awaiting_user';
@@ -197,7 +211,7 @@ export function ChatPanel() {
     try {
       await sendChat(text);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '发送失败');
+      toast.error(e instanceof Error ? e.message : t('chat.sendFailed'));
     }
   }
 
@@ -205,11 +219,11 @@ export function ChatPanel() {
     <div className="flex h-full min-h-0 flex-col bg-[#f7f4ee] dark:bg-[#171411]">
       {/* 面板头 */}
       <div className="flex items-center gap-2 border-b border-stone-300/70 px-4 py-2.5 dark:border-stone-800">
-        <span className="font-display text-[14px] font-bold tracking-tight text-stone-800 dark:text-stone-100">对谈室</span>
-        <span className="text-[10px] tracking-[0.18em] text-stone-400">SOCRATIC ROOM</span>
+        <span className="font-display text-[14px] font-bold tracking-tight text-stone-800 dark:text-stone-100">{t('chat.title')}</span>
+        <span className="text-[10px] tracking-[0.18em] text-stone-400">{t('chat.sub')}</span>
         {!connected && (
           <span className="ml-auto rounded-full bg-stone-200 px-2 py-0.5 text-[10px] text-stone-500 dark:bg-stone-800">
-            离线重连中
+            {t('chat.offline')}
           </span>
         )}
       </div>
@@ -220,22 +234,22 @@ export function ChatPanel() {
           <div className="px-2 pt-4 pb-2 sm:pt-8">
             <div className="mb-4 rounded-2xl border border-stone-300/70 bg-[#fdfaf1] p-4 shadow-sm dark:border-stone-700 dark:bg-stone-800/70">
               <div className="font-display mb-1 text-[15px] font-bold text-stone-800 dark:text-stone-100">
-                你好，我是 Serendip 🔍
+                {t('chat.introTitle')}
               </div>
               <p className="text-[12.5px] leading-relaxed text-stone-600 dark:text-stone-300">
-                一位生物科研灵感侦探。告诉我最近让你好奇的现象——哪怕只是一团模糊的直觉。我会通过追问帮你把它磨成值得研究的科学问题，然后自主检索文献与数据库，把证据钉上右边的证据墙。
+                {t('chat.introBody')}
               </p>
             </div>
-            <div className="mb-2 px-1 text-[11px] font-medium tracking-wider text-stone-400">从这些谜题开始，或直接说出你的好奇心：</div>
+            <div className="mb-2 px-1 text-[11px] font-medium tracking-wider text-stone-400">{t('chat.introTopics')}</div>
             <div className="grid gap-2">
-              {SAMPLE_TOPICS.map((t) => (
+              {SAMPLE_TOPICS[lang].map((topic) => (
                 <button
-                  key={t}
-                  onClick={() => void sendChat(t).catch((e) => toast.error(e.message))}
+                  key={topic}
+                  onClick={() => void sendChat(topic).catch((e) => toast.error(e.message))}
                   className="group flex items-center gap-2 rounded-xl border border-stone-300/70 bg-white/60 px-3 py-2.5 text-left text-[12.5px] text-stone-700 shadow-sm transition-all hover:border-amber-700/40 hover:bg-[#fdf3d7] dark:border-stone-700 dark:bg-stone-800/60 dark:text-stone-200 dark:hover:border-amber-600/40 dark:hover:bg-amber-950/30"
                 >
                   <Sparkles size={13} className="shrink-0 text-amber-700 dark:text-amber-500" />
-                  <span className="flex-1">{t}</span>
+                  <span className="flex-1">{topic}</span>
                   <ArrowRight size={13} className="shrink-0 text-stone-300 transition-transform group-hover:translate-x-0.5 group-hover:text-amber-700 dark:text-stone-600" />
                 </button>
               ))}
@@ -256,7 +270,7 @@ export function ChatPanel() {
               <span className="dot-flash" />
               <span className="dot-flash [animation-delay:150ms]" />
               <span className="dot-flash [animation-delay:300ms]" />
-              <span className="ml-1 text-[11px] text-stone-400">Serendip 正在思考…</span>
+              <span className="ml-1 text-[11px] text-stone-400">{t('chat.typing')}</span>
             </div>
           </div>
         )}
@@ -264,7 +278,7 @@ export function ChatPanel() {
         {(working || investigating) && <LiveInvestigation />}
       </div>
 
-      {/* 进入调查 CTA */}
+      {/* 进入研究 CTA */}
       <AnimatePresence>
         {showResearchCTA && (
           <motion.div
@@ -280,10 +294,10 @@ export function ChatPanel() {
               <FlaskConical size={17} className="shrink-0 text-amber-800 dark:text-amber-400" />
               <div className="flex-1">
                 <div className="text-[13px] font-semibold text-stone-800 dark:text-amber-100">
-                  {session?.phase === 'done' || (useStudio.getState().stats?.round ?? 0) > 0 ? '继续自主调查' : '进入自主调查'}
+                  {session?.phase === 'done' || (stats?.round ?? 0) > 0 ? t('chat.ctaContinue') : t('chat.ctaStart')}
                 </div>
                 <div className="text-[11px] text-stone-500 dark:text-amber-200/70">
-                  侦探将检索 PubMed / OpenAlex / UniProt 等数据库，把证据钉上证据墙
+                  {t('chat.ctaSub')}
                 </div>
               </div>
               <ArrowRight size={15} className="shrink-0 text-amber-800 transition-transform group-hover:translate-x-1 dark:text-amber-400" />
@@ -296,7 +310,7 @@ export function ChatPanel() {
       <div className="border-t border-stone-300/70 px-3 py-2.5 dark:border-stone-800">
         {awaiting && (
           <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
-            <Pin size={11} className="rotate-45" /> 侦探在等你的回答——你的回复将直接推进调查
+            <Pin size={11} className="rotate-45" /> {t('chat.awaitingHint')}
           </div>
         )}
         <div className="flex items-end gap-2">
@@ -311,10 +325,10 @@ export function ChatPanel() {
             }}
             placeholder={
               investigating
-                ? '可随时补充线索或纠正方向，Agent 将在检查点纳入…'
+                ? t('chat.phInvestigating')
                 : awaiting
-                  ? '回答侦探的问题…'
-                  : '说说让你好奇的生物现象…（Enter 发送）'
+                  ? t('chat.phAwaiting')
+                  : t('chat.phIdle')
             }
             disabled={interviewBusy}
             rows={2}
@@ -328,7 +342,7 @@ export function ChatPanel() {
             onClick={() => void send()}
             disabled={!draft.trim() || interviewBusy}
             className="h-[44px] w-[44px] shrink-0 rounded-xl bg-gradient-to-b from-[#a3450f] to-[#8a380c] shadow-sm hover:from-[#8f3c0c]"
-            aria-label="发送"
+            aria-label={t('chat.send')}
           >
             {interviewBusy ? <Loader2 size={16} className="animate-spin" /> : <SendHorizontal size={16} />}
           </Button>

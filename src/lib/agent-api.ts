@@ -56,7 +56,7 @@ export type CreateSessionResult = {
 export const agentApi = {
   listSessions: () => api<{ sessions: SessionSummary[] }>('/sessions'),
 
-  createSession: (opts?: { title?: string; demo?: boolean }) =>
+  createSession: (opts?: { title?: string; demo?: boolean; lang?: 'zh' | 'en' }) =>
     api<CreateSessionResult>('/sessions', { method: 'POST', json: opts ?? {} }),
 
   getSession: (id: string) => api<SessionState>(`/sessions/${id}`),
@@ -66,13 +66,13 @@ export const agentApi = {
 
   deleteSession: (id: string) => api<{ ok: boolean }>(`/sessions/${id}`, { method: 'DELETE' }),
 
-  chat: (id: string, text: string) =>
+  chat: (id: string, text: string, lang?: 'zh' | 'en') =>
     api<{ ok: boolean; mode: 'interview' | 'steer' | 'queued' }>(`/sessions/${id}/chat`, {
       method: 'POST',
-      json: { text },
+      json: { text, lang },
     }),
 
-  research: (id: string, opts: { focus?: string; maxSteps?: number; maxMinutes?: number }) =>
+  research: (id: string, opts: { focus?: string; maxSteps?: number; maxMinutes?: number; lang?: 'zh' | 'en' }) =>
     api<{ ok: boolean }>(`/sessions/${id}/research`, { method: 'POST', json: opts }),
 
   control: (id: string, action: 'pause' | 'resume' | 'stop') =>
@@ -121,8 +121,8 @@ export const agentApi = {
 
   // ---------- 深研方向（Task 12） ----------
 
-  generateDirections: (id: string) =>
-    api<{ ok: boolean; running: boolean }>(`/sessions/${id}/directions`, { method: 'POST', json: {} }),
+  generateDirections: (id: string, lang?: 'zh' | 'en') =>
+    api<{ ok: boolean; running: boolean }>(`/sessions/${id}/directions`, { method: 'POST', json: { lang } }),
 
   getDirections: (id: string) =>
     api<{ directions: unknown; running: boolean }>(`/sessions/${id}/directions`),

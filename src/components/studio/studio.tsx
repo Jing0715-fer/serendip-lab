@@ -1,6 +1,6 @@
 'use client';
 
-// studio.tsx — 工作台编排器：布局骨架 + 会话引导 + SSE 订阅 + 移动端底部导航
+// studio.tsx — 工作台编排器：布局骨架 + 会话引导 + SSE 订阅 + 移动端底部导航（Task 13 双语）
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { Compass, MessagesSquare, Network, ScrollText, Search } from 'lucide-react';
@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
 import { useAgentStream } from '@/hooks/use-agent-stream';
+import { fmt, rehydrateLang, useI18n, useT } from '@/lib/i18n';
 import { TopBar } from './top-bar';
 import { ChatPanel } from './chat-panel';
 import { Workspace } from './workspace';
@@ -37,11 +38,11 @@ function BootSkeleton() {
 }
 
 const MOBILE_TABS = [
-  { key: 'chat', label: '对谈', icon: MessagesSquare },
-  { key: 'canvas', label: '证据墙', icon: Network },
-  { key: 'narrative', label: '综述', icon: ScrollText },
-  { key: 'directions', label: '深研', icon: Compass },
-  { key: 'questions', label: '问题', icon: Search },
+  { key: 'chat', tKey: 'app.mobileChat', icon: MessagesSquare },
+  { key: 'canvas', tKey: 'app.mobileCanvas', icon: Network },
+  { key: 'narrative', tKey: 'app.mobileNarrative', icon: ScrollText },
+  { key: 'directions', tKey: 'app.mobileDirections', icon: Compass },
+  { key: 'questions', tKey: 'app.mobileQuestions', icon: Search },
 ] as const;
 
 export function Studio() {
@@ -53,12 +54,18 @@ export function Studio() {
   const setMobileView = useStudio((s) => s.setMobileView);
   const workspaceTab = useStudio((s) => s.workspaceTab);
   const setWorkspaceTab = useStudio((s) => s.setWorkspaceTab);
+  const t = useT();
+  useI18n((s) => s.lang);
 
   useAgentStream();
 
   useEffect(() => {
+    rehydrateLang();
+  }, []);
+
+  useEffect(() => {
     void init().catch((e) => {
-      toast.error(`初始化失败：${e instanceof Error ? e.message : String(e)}（请确认 agent-service 正在运行）`);
+      toast.error(fmt(t('app.initFailed'), { msg: e instanceof Error ? e.message : String(e) }));
     });
   }, []);
 
@@ -90,20 +97,20 @@ export function Studio() {
 
       {/* 移动端底部导航 */}
       <nav className="z-30 flex items-stretch border-t border-stone-300/70 bg-[#f7f4ee]/95 backdrop-blur dark:border-stone-800 dark:bg-[#171411]/95 lg:hidden">
-        {MOBILE_TABS.map((t) => {
+        {MOBILE_TABS.map((tab) => {
           const active =
-            t.key === 'chat'
+            tab.key === 'chat'
               ? mobileView === 'chat'
-              : mobileView === 'workspace' && workspaceTab === t.key;
+              : mobileView === 'workspace' && workspaceTab === tab.key;
           return (
             <button
-              key={t.key}
+              key={tab.key}
               onClick={() => {
-                if (t.key === 'chat') setMobileView('chat');
+                if (tab.key === 'chat') setMobileView('chat');
                 else {
                   setMobileView('workspace');
-                  if (t.key !== 'canvas' || workspaceTab !== 'canvas') {
-                    setWorkspaceTab(t.key as 'canvas' | 'narrative' | 'questions' | 'activity' | 'directions');
+                  if (tab.key !== 'canvas' || workspaceTab !== 'canvas') {
+                    setWorkspaceTab(tab.key as 'canvas' | 'narrative' | 'questions' | 'activity' | 'directions');
                   }
                 }
               }}
@@ -112,8 +119,8 @@ export function Studio() {
                 active ? 'text-[#a3450f] dark:text-amber-500' : 'text-stone-400'
               )}
             >
-              <t.icon size={19} />
-              {t.label}
+              <tab.icon size={19} />
+              {t(tab.tKey)}
               {active && <span className="h-0.5 w-6 rounded-full bg-[#a3450f] dark:bg-amber-500" />}
             </button>
           );
@@ -123,11 +130,11 @@ export function Studio() {
       {/* 页脚（固定底部） */}
       <footer className="z-20 flex items-center gap-2 border-t border-stone-300/70 bg-[#f2eee5] px-4 py-1.5 text-[10.5px] text-stone-500 dark:border-stone-800 dark:bg-[#141110] dark:text-stone-400">
         <span className="font-display font-semibold tracking-tight">Serendip Lab</span>
-        <span className="hidden sm:inline">· 生物科研灵感侦探</span>
+        <span className="hidden sm:inline">· {t('app.footerTagline')}</span>
         <span className="ml-auto hidden items-center gap-3 md:flex">
-          <span>证据墙数据来自 PubMed / Europe PMC / OpenAlex / UniProt / NCBI / PDB</span>
+          <span>{t('app.footerSources')}</span>
         </span>
-        <span className="ml-auto md:ml-3">AI 生成内容仅供研究启发，请以原始文献为准</span>
+        <span className="ml-auto md:ml-3">{t('app.footerDisclaimer')}</span>
       </footer>
 
       <ResearchDialog />

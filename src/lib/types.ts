@@ -187,42 +187,12 @@ export type SessionState = {
   activity: ActivityEvent[];
 };
 
-export const NODE_KIND_LABEL: Record<NodeKind, string> = {
-  question: '核心问题',
-  hypothesis: '假说',
-  evidence: '证据',
-  insight: '洞见',
-  source: '文献源',
-  gap: '待查',
-};
-
-export const EDGE_RELATION_LABEL: Record<EdgeRelation, string> = {
-  supports: '支持',
-  contradicts: '矛盾',
-  relates: '相关',
-  derives: '推出',
-  answers: '回答',
-};
-
-export const PHASE_LABEL: Record<SessionPhase, string> = {
-  interview: '苏格拉底访谈',
-  planning: '部署调查',
-  investigating: '调查中',
-  synthesizing: '结案推演',
-  awaiting_user: '等你回应',
-  done: '已结案',
-};
+/* 标签表（NODE_KIND_LABEL / EDGE_RELATION_LABEL / PHASE_LABEL / AGENT_FACE_LABEL / TOOL_LABEL）
+   已迁至 @/lib/i18n（Task 13 双语支持），按 useI18n().lang 取词。 */
 
 /* ---------------- LLM 配置（agent-service /llm-config） ---------------- */
 
 export type AgentFace = 'interviewer' | 'planner' | 'investigator' | 'synthesizer';
-
-export const AGENT_FACE_LABEL: Record<AgentFace, string> = {
-  interviewer: '访谈者',
-  planner: '规划师',
-  investigator: '调查员',
-  synthesizer: '综合师',
-};
 
 export type ProviderModelInfo = { id: string; name: string; contextWindow?: number };
 

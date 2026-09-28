@@ -116,6 +116,8 @@ export type SessionMeta = {
   }
   pendingQuestion?: string | null
   title_suggestion?: string
+  /** 会话输出语言（Task 13 双语）：zh 默认；由前端随请求透传并落库 */
+  lang?: 'zh' | 'en'
 }
 
 export type Budget = {
@@ -181,7 +183,7 @@ db.exec('PRAGMA busy_timeout=5000;')
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS sessions(
-  id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新调查',
+  id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '新课题',
   phase TEXT NOT NULL DEFAULT 'interview', status TEXT NOT NULL DEFAULT 'idle',
   meta TEXT NOT NULL DEFAULT '{}',
   plan TEXT, narrative TEXT NOT NULL DEFAULT '',
@@ -364,12 +366,13 @@ export function defaultBudget(): Budget {
 }
 
 // ---------- sessions ----------
-export function createSession(title?: string): SessionRow {
+export function createSession(title?: string, lang?: 'zh' | 'en'): SessionRow {
   const id = uuid()
   const t = now()
+  const meta = { ...defaultMeta(), ...(lang === 'en' ? { lang: 'en' as const } : {}) }
   const row: SessionRow = {
-    id, title: title || '新调查', phase: 'interview', status: 'idle',
-    meta: JSON.stringify(defaultMeta()), plan: null, narrative: '',
+    id, title: title || (lang === 'en' ? 'New Project' : '新课题'), phase: 'interview', status: 'idle',
+    meta: JSON.stringify(meta), plan: null, narrative: '',
     budget: JSON.stringify(defaultBudget()), created_at: t, updated_at: t,
   }
   db.run(

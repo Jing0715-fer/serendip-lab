@@ -9,6 +9,7 @@ import { broadcast, makeSseResponse } from './src/emitter'
 import { AgentRuntime, stateSnapshot } from './src/runtime'
 import { seedDemoSession } from './src/seed'
 import { generateDirections, directionsRunning } from './src/directions'
+import { getSessionLang, setSessionLang, normLang, noticeFor } from './src/lang'
 import { sleep, clamp } from './src/util'
 import {
   PROVIDER_CATALOG,
@@ -75,6 +76,7 @@ async function handleChat(id: string, request: Request) {
   const body = await readBody(request)
   const text = String(body.text || '').trim()
   if (!text) return errJson('缺少 text', 400)
+  if (body.lang) setSessionLang(id, normLang(body.lang))
 
   const runtime = AgentRuntime.get(id)
 
@@ -98,7 +100,7 @@ async function handleChat(id: string, request: Request) {
     const notice = insertMessage(id, {
       role: 'system',
       kind: 'notice',
-      content: '已加入调查线索队列，Agent 将在检查点纳入',
+      content: noticeFor(getSessionLang(id), 'steerQueued'),
     })
     broadcast(id, 'message', notice)
     touchSession(id)
@@ -111,7 +113,7 @@ async function handleChat(id: string, request: Request) {
   void runtime.interviewTurn(text).catch((e) => {
     console.error('[interviewTurn]', e)
     try {
-      const errMsg = insertMessage(id, { role: 'assistant', kind: 'notice', content: '（访谈者思考暂时不可用，请稍后重试）' })
+      const errMsg = insertMessage(id, { role: 'assistant', kind: 'notice', content: noticeFor(getSessionLang(id), 'interviewerUnavailable') })
       broadcast(id, 'message', errMsg)
     } catch { /* ignore */ }
   })
@@ -123,6 +125,7 @@ async function handleResearch(id: string, request: Request) {
   const row = getSessionRow(id)
   if (!row) return errJson('session not found', 404)
   const body = await readBody(request)
+  if (body.lang) setSessionLang(id, normLang(body.lang))
   const focus = body.focus ? String(body.focus).trim().slice(0, 500) : undefined
   const maxSteps = clamp(Math.round(Number(body.maxSteps) || 40), 1, 200)
   const maxMinutes = clamp(Math.round(Number(body.maxMinutes) || 15), 1, 240)
@@ -255,8 +258,9 @@ const server = Bun.serve({
       if (method === 'POST') {
         const body = await readBody(request)
         if (body.demo === true) {
-          const sid = seedDemoSession()
-          console.log(`[seed] demo session created: ${sid}`)
+          const lang = normLang(body.lang)
+          const sid = seedDemoSession(lang)
+          console.log(`[seed] demo session created: ${sid} (lang=${lang})`)
           return json({
             session: mapSessionFull(getSessionRow(sid)!),
             nodes: listNodes(sid),
@@ -265,7 +269,8 @@ const server = Bun.serve({
             narrative: getSessionRow(sid)!.narrative,
           })
         }
-        const row = createSession(body.title ? String(body.title).slice(0, 80) : undefined)
+        const lang = normLang(body.lang)
+        const row = createSession(body.title ? String(body.title).slice(0, 80) : undefined, lang)
         return json({
           session: mapSessionFull(row),
           nodes: [],
@@ -322,6 +327,8 @@ const server = Bun.serve({
       // 深研方向：异步生成（结果经 SSE directions 事件推送）
       if (action === 'directions') {
         if (method === 'POST') {
+          const body = await readBody(request)
+          if (body.lang) setSessionLang(id, normLang(body.lang))
           const r = await generateDirections(id)
           if (!r.ok) {
             const status = r.error === 'directions_busy' ? 409 : r.error === 'session not found' ? 404 : 400
@@ -359,7 +366,7 @@ const server = Bun.serve({
         const msg = insertMessage(id, {
           role: 'user',
           kind: 'steer',
-          content: `【用户手动添加线索】${title}: ${content}`,
+          content: `${noticeFor(getSessionLang(id), 'userNotePrefix')}${title}: ${content}`,
         })
         broadcast(id, 'message', msg)
         broadcast(id, 'state', stateSnapshot(id))

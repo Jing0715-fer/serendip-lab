@@ -1,13 +1,14 @@
 'use client';
 
-// node-inspector.tsx — 证据卡片详情抽屉：详细说明 / 可点击引用 / 置信度 / 关系网
+// node-inspector.tsx — 证据卡详情抽屉：详细说明 / 可点击引用 / 置信度 / 关系网络（Task 13 双语）
 import { BookOpenText, ExternalLink, Star, Tag, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useStudio, selectInspectorNode, fmtTime } from '@/store/studio';
-import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, type EdgeRelation } from '@/lib/types';
+import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, fmt, useI18n, useT } from '@/lib/i18n';
+import type { EdgeRelation } from '@/lib/types';
 import { resolveCitationUrl, citationLabel } from '@/lib/citation';
 
 const REL_STYLE: Record<EdgeRelation, string> = {
@@ -24,6 +25,8 @@ export function NodeInspector() {
   const nodes = useStudio((s) => s.nodes);
   const openInspector = useStudio((s) => s.openInspector);
   const toggleStar = useStudio((s) => s.toggleStar);
+  const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   if (!node) return <Sheet open={false} onOpenChange={(v) => !v && openInspector(null)}><SheetContent /></Sheet>;
 
@@ -38,15 +41,15 @@ export function NodeInspector() {
         <SheetHeader className="space-y-2 border-b border-stone-300/70 px-4 py-3 dark:border-stone-800">
           <div className="flex items-center gap-2">
             <Badge variant="outline" className="border-amber-800/40 bg-amber-100 text-[11px] text-amber-900">
-              {NODE_KIND_LABEL[node.kind]}
+              {NODE_KIND_LABEL[node.kind][lang]}
             </Badge>
-            <span className="text-[10.5px] text-stone-400">钉上于 {fmtTime(node.createdAt)}</span>
+            <span className="text-[10.5px] text-stone-400">{fmt(t('ins.pinnedAt'), { time: fmtTime(node.createdAt) })}</span>
             <Button
               size="icon"
               variant="ghost"
               className="ml-auto h-7 w-7"
               onClick={() => void toggleStar(node.id, !node.starred)}
-              title={node.starred ? '取消星标' : '星标这条线索'}
+              title={node.starred ? t('ins.unstar') : t('ins.star')}
             >
               <Star size={15} className={cn(node.starred ? 'fill-amber-500 text-amber-500' : 'text-stone-400')} />
             </Button>
@@ -59,15 +62,15 @@ export function NodeInspector() {
         <div className="space-y-4 px-4 py-4 text-[13px]">
           {/* 内容 */}
           <div className="rounded-xl border border-stone-300/70 bg-[#fdfaf1] p-3 leading-relaxed text-stone-700 dark:border-stone-700 dark:bg-stone-800/70 dark:text-stone-200">
-            {node.content || '（无详细内容）'}
+            {node.content || t('ins.noContent')}
           </div>
 
-          {/* 详细说明（agent 生成的深度解读） */}
+          {/* 深度解读（agent 生成的深度解读） */}
           {node.detail && node.detail.trim() && (
             <div className="rounded-xl border border-amber-700/25 bg-[#fbf5e4] p-3 dark:border-amber-600/25 dark:bg-amber-950/25">
               <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-amber-800 dark:text-amber-300">
                 <BookOpenText size={12} aria-hidden="true" />
-                侦探解读
+                {t('ins.detail')}
               </div>
               <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-stone-700 dark:text-stone-200">
                 {node.detail}
@@ -79,7 +82,7 @@ export function NodeInspector() {
           {(node.sourceRef || citationUrl) && (
             <div className="rounded-xl border border-emerald-700/20 bg-emerald-50/60 p-2.5 dark:border-emerald-700/30 dark:bg-emerald-950/20">
               <div className="mb-1 text-[11px] font-semibold tracking-wider text-emerald-800 dark:text-emerald-400">
-                文献引用
+                {t('ins.citation')}
               </div>
               {citationUrl ? (
                 <a
@@ -87,7 +90,7 @@ export function NodeInspector() {
                   target="_blank"
                   rel="noopener noreferrer"
                   className="group/cite flex items-center gap-1.5 rounded-lg border border-emerald-700/30 bg-white/80 px-2.5 py-1.5 font-mono text-[11.5px] text-emerald-900 transition-colors hover:border-emerald-600 hover:bg-white dark:border-emerald-700/40 dark:bg-stone-900/60 dark:text-emerald-300 dark:hover:bg-stone-900"
-                  title={`打开原文：${citationUrl}`}
+                  title={fmt(t('ins.openSource'), { url: citationUrl })}
                 >
                   <span className="truncate">{node.sourceRef ? citationLabel(node.sourceRef) : citationUrl}</span>
                   <ExternalLink size={11} className="shrink-0 opacity-60 transition-opacity group-hover/cite:opacity-100" aria-hidden="true" />
@@ -105,18 +108,18 @@ export function NodeInspector() {
           {/* 元信息 */}
           <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-stone-500 dark:text-stone-400">
             {node.sourceUrl && citationUrl && (
-              <a
-                href={citationUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-1 rounded-full border border-stone-300 px-2 py-0.5 text-[11px] text-emerald-800 underline-offset-2 hover:underline dark:border-stone-600 dark:text-emerald-400"
-              >
-                原文链接 <ExternalLink size={10} />
-              </a>
-            )}
+            <a
+              href={citationUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1 rounded-full border border-stone-300 px-2 py-0.5 text-[11px] text-emerald-800 underline-offset-2 hover:underline dark:border-stone-600 dark:text-emerald-400"
+            >
+              {t('ins.sourceLink')} <ExternalLink size={10} />
+            </a>
+          )}
             {node.confidence != null && (
               <span className="flex items-center gap-1.5">
-                置信度
+                {t('ins.confidence')}
                 <span className="relative h-1.5 w-20 overflow-hidden rounded-full bg-stone-200 dark:bg-stone-700">
                   <span
                     className={cn(
@@ -139,7 +142,7 @@ export function NodeInspector() {
                   node.status === 'contradicted' && 'border-red-400/60 text-red-700 dark:text-red-400'
                 )}
               >
-                {node.status === 'strong' ? '证据扎实' : node.status === 'weak' ? '证据偏弱' : '存在矛盾'}
+                {node.status === 'strong' ? t('ins.statusStrong') : node.status === 'weak' ? t('ins.statusWeak') : t('ins.statusContradicted')}
               </Badge>
             )}
           </div>
@@ -159,7 +162,7 @@ export function NodeInspector() {
           {/* 关系网 */}
           {(outgoing.length > 0 || incoming.length > 0) && (
             <div className="space-y-2">
-              <div className="text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">线索关系网</div>
+              <div className="text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">{t('ins.relations')}</div>
               <div className="space-y-1.5">
                 {outgoing.map((e) => (
                   <button
@@ -168,7 +171,7 @@ export function NodeInspector() {
                     className="flex w-full items-center gap-2 rounded-lg border border-stone-200 bg-white/60 px-2.5 py-1.5 text-left text-[12px] transition-colors hover:border-stone-400 dark:border-stone-700 dark:bg-stone-800/50 dark:hover:border-stone-500"
                   >
                     <span className={cn('rounded border px-1.5 py-0.5 text-[10px]', REL_STYLE[e.relation])}>
-                      {EDGE_RELATION_LABEL[e.relation]}
+                      {EDGE_RELATION_LABEL[e.relation][lang]}
                     </span>
                     <span className="flex-1 truncate text-stone-700 dark:text-stone-200">{titleOf(e.target)}</span>
                   </button>
@@ -180,7 +183,7 @@ export function NodeInspector() {
                     className="flex w-full items-center gap-2 rounded-lg border border-stone-200 bg-white/60 px-2.5 py-1.5 text-left text-[12px] transition-colors hover:border-stone-400 dark:border-stone-700 dark:bg-stone-800/50 dark:hover:border-stone-500"
                   >
                     <span className={cn('rounded border px-1.5 py-0.5 text-[10px]', REL_STYLE[e.relation])}>
-                      {EDGE_RELATION_LABEL[e.relation]}
+                      {EDGE_RELATION_LABEL[e.relation][lang]}
                     </span>
                     <span className="flex-1 truncate text-stone-500 dark:text-stone-400">← {titleOf(e.source)}</span>
                   </button>
@@ -191,7 +194,7 @@ export function NodeInspector() {
 
           {node.pinnedBy === 'user' && (
             <div className="flex items-center gap-1.5 text-[11px] text-stone-400">
-              <X size={10} /> 该线索由你手动钉上，Agent 会将其纳入调查上下文
+              <X size={10} /> {t('ins.userNote')}
             </div>
           )}
         </div>

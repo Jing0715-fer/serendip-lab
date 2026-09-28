@@ -5,6 +5,7 @@ import { Crown, FileSearch, Link2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
+import { useT } from '@/lib/i18n';
 import type { ResearchQuestion } from '@/lib/types';
 
 function ScoreBar({ label, value, tone }: { label: string; value: number; tone: string }) {
@@ -27,6 +28,7 @@ function ScoreBar({ label, value, tone }: { label: string; value: number; tone: 
 function QuestionCard({ q, rank }: { q: ResearchQuestion; rank: number }) {
   const nodes = useStudio((s) => s.nodes);
   const openInspector = useStudio((s) => s.openInspector);
+  const t = useT();
 
   const refs = q.evidenceRefs
     .map((ref) => nodes.find((n) => n.title === ref || n.title.includes(ref) || ref.includes(n.title)))
@@ -54,7 +56,7 @@ function QuestionCard({ q, rank }: { q: ResearchQuestion; rank: number }) {
         </span>
         {q.recommended && (
           <Badge variant="outline" className="gap-1 border-amber-700/50 bg-amber-100 text-[10.5px] text-amber-900 dark:border-amber-500/40 dark:bg-amber-900/40 dark:text-amber-200">
-            <Crown size={10} /> 推荐深挖
+            <Crown size={10} /> {t('question.recommended')}
           </Badge>
         )}
       </div>
@@ -65,14 +67,14 @@ function QuestionCard({ q, rank }: { q: ResearchQuestion; rank: number }) {
         <p className="mb-3 text-[12.5px] leading-relaxed text-stone-600 dark:text-stone-300">{q.rationale}</p>
       )}
       <div className="mb-3 flex flex-wrap gap-x-5 gap-y-1.5">
-        <ScoreBar label="新颖性" value={q.scores.novelty} tone="bg-[#b45309]" />
-        <ScoreBar label="可行性" value={q.scores.feasibility} tone="bg-emerald-600" />
-        <ScoreBar label="影响力" value={q.scores.impact} tone="bg-[#b91c1c]" />
+        <ScoreBar label={t('question.novelty')} value={q.scores.novelty} tone="bg-[#b45309]" />
+        <ScoreBar label={t('question.feasibility')} value={q.scores.feasibility} tone="bg-emerald-600" />
+        <ScoreBar label={t('question.impact')} value={q.scores.impact} tone="bg-[#b91c1c]" />
       </div>
       {refs.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-t border-stone-200/70 pt-2 dark:border-stone-700/60">
           <Link2 size={11} className="text-stone-400" />
-          <span className="text-[10.5px] text-stone-400">证据支撑：</span>
+          <span className="text-[10.5px] text-stone-400">{t('question.refs')}</span>
           {refs.map((n) => (
             <button
               key={n.id}
@@ -90,6 +92,7 @@ function QuestionCard({ q, rank }: { q: ResearchQuestion; rank: number }) {
 
 export function QuestionsTab() {
   const questions = useStudio((s) => s.questions);
+  const t = useT();
 
   if (questions.length === 0) {
     return (
@@ -97,9 +100,9 @@ export function QuestionsTab() {
         <div className="flex h-14 w-14 items-center justify-center rounded-full border-2 border-dashed border-stone-300 text-stone-300 dark:border-stone-700">
           <FileSearch size={22} />
         </div>
-        <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">问题清单还是空的</div>
+        <div className="font-display text-[15px] font-bold text-stone-600 dark:text-stone-300">{t('question.emptyTitle')}</div>
         <p className="max-w-[360px] text-[12.5px] leading-relaxed text-stone-400">
-          调查进行到检查点时，Serendip 会评估当前证据，挑出值得进一步研究的科学问题——按新颖性、可行性、影响力打分，并标出最值得深挖的一个。
+          {t('question.emptyBody')}
         </p>
       </div>
     );
@@ -116,7 +119,7 @@ export function QuestionsTab() {
     <div className="studio-scroll h-full overflow-y-auto bg-[#f7f4ee] px-4 py-4 dark:bg-[#171411] sm:px-6">
       <div className="mx-auto max-w-[720px]">
         <div className="mb-1 text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">
-          SERENDIP 的推荐 · 供参考，最终判断权在你
+          {t('question.header')}
         </div>
         <div className="grid gap-3">
           {sorted.map((q, i) => (

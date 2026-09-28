@@ -1,7 +1,9 @@
 'use client';
 
-// 证据墙六种卡片节点 + nodeTypes 映射（Task 2-b）
+// 证据墙六种卡片节点 + nodeTypes 映射（Task 2-b → Task 13 卡片详情增强 + 双语）
 // 视觉契约：docs/ARCHITECTURE.md §10.3 —— 纸质卡片 + 图钉 + 按 id 哈希微旋转 + live 钉上动画
+// Task 13：卡面承载更多内容——类型小签 / 标题 3 行 / 正文 4 行 / 深度解读节选 /
+// 标签 chips / 置信度迷你条 / 来源 chip，仍保持拍立得质感。
 
 import type { CSSProperties } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
@@ -17,6 +19,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { NODE_KIND_LABEL, useI18n } from '@/lib/i18n';
 import type { BoardNode, NodeKind } from '@/lib/types';
 
 /** 节点 data：把 BoardNode 整体塞进 React Flow 的 data，外加 live 标记 */
@@ -60,10 +63,17 @@ export const KIND_COLOR: Record<NodeKind, string> = {
 
 function CardBase({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
   const kind: NodeKind = data.kind;
+  const lang = useI18n((s) => s.lang);
+  const t = NODE_KIND_LABEL[kind][lang];
   const Icon = KIND_ICON[kind];
   const tilt = tiltOf(id);
   const live = data.live === true;
-  const hasMeta = Boolean(data.sourceRef || data.confidence != null || data.starred);
+
+  const tags = (data.tags ?? []).filter(Boolean).slice(0, 3);
+  const detail = data.detail?.trim() ?? '';
+  const confTone =
+    (data.confidence ?? 0) >= 0.75 ? 'ev-conf-bar--hi' : (data.confidence ?? 0) >= 0.5 ? 'ev-conf-bar--md' : 'ev-conf-bar--lo';
+  const contradicted = data.status === 'contradicted';
 
   return (
     <motion.div
@@ -92,33 +102,57 @@ function CardBase({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
         <Handle type="target" position={Position.Left} className="ev-handle" />
         <Handle type="source" position={Position.Right} className="ev-handle" />
 
-        {/* 底纹水印：右下角淡图标，戏剧感 */}
+        {/* 底纹水印：右下角淡图标 */}
         <Icon className="ev-card__watermark" aria-hidden="true" />
 
         <div className="ev-card__inner">
           <header className="ev-card__head">
             <Icon className="ev-card__glyph" size={13} strokeWidth={2.2} aria-hidden="true" />
             <h4 className="ev-card__title">{data.title}</h4>
+            <span className="ev-kind-chip">{t}</span>
           </header>
           <p className="ev-card__body">{data.content}</p>
+
+          {/* 深度解读节选：点击卡片可在检视器中读全文 */}
+          {detail && (
+            <p className="ev-card__detail">
+              <span className="ev-card__detail-mark" aria-hidden="true">❝</span>
+              {detail}
+            </p>
+          )}
+
+          {/* 标签 */}
+          {tags.length > 0 && (
+            <div className="ev-card__tags">
+              {tags.map((tag) => (
+                <span key={tag} className="ev-tag">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
-        {hasMeta && (
-          <footer className="ev-card__meta">
-            {data.sourceRef ? <span className="ev-chip">{data.sourceRef}</span> : null}
-            {data.confidence != null ? (
-              <span className="ev-conf">置信 {data.confidence.toFixed(2)}</span>
-            ) : null}
-            {data.starred ? (
-              <span className="ev-star" title="星标">
-                <Star size={11} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+        <footer className="ev-card__meta">
+          {data.sourceRef ? <span className="ev-chip">{data.sourceRef}</span> : null}
+          {data.confidence != null && (
+            <span className={cn('ev-conf', contradicted && 'ev-conf--warn')}>
+              <span className={cn('ev-conf-bar', confTone)} aria-hidden="true">
+                <span className="ev-conf-bar__fill" style={{ width: `${Math.round(data.confidence * 100)}%` }} />
               </span>
-            ) : null}
-          </footer>
-        )}
+              <span className="ev-conf__num">{data.confidence.toFixed(2)}</span>
+            </span>
+          )}
+          {contradicted && <span className="ev-warn-flag" title={data.status}>⚠</span>}
+          {data.starred ? (
+            <span className="ev-star" title="★">
+              <Star size={11} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+            </span>
+          ) : null}
+        </footer>
 
         {/* 待查角标（gap 专属） */}
-        {kind === 'gap' && <span className="ev-gap-flag">待查</span>}
+        {kind === 'gap' && <span className="ev-gap-flag">{NODE_KIND_LABEL.gap[lang]}</span>}
       </article>
     </motion.div>
   );

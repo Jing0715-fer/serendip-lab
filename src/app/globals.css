@@ -122,7 +122,7 @@
 }
 
 /* =====================================================================
-   侦探证据墙 · 软木板画布（Task 2-b 追加；只追加不改上方内容）
+   证据墙 · 软木板画布（Task 2-b 追加；只追加不改上方内容）
    契约：docs/ARCHITECTURE.md §10.3 —— 全程禁用 indigo / blue
    ===================================================================== */
 
@@ -228,7 +228,7 @@
 .ev-pin--brass { background: radial-gradient(circle at 38% 32%, #f2d38c, #c99a3a 58%, #8a6a1c); }
 .ev-pin--gray { background: radial-gradient(circle at 38% 32%, #d4cfc6, #8f8b84 58%, #5d5a54); }
 
-/* ---------- 卡片通用：纸质感 + 微旋转 + hover 回正 ---------- */
+/* ---------- 卡片通用：纸质感 + 微旋转 + hover 回正（Task 13：卡面承载更多内容） ---------- */
 .ev-node {
   position: relative;
 }
@@ -237,10 +237,10 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  width: 210px;
-  max-height: 132px;
+  width: 244px;
+  max-height: 224px;
   overflow: hidden;
-  padding: 9px 11px 7px;
+  padding: 10px 12px 8px;
   border-radius: 2px;
   box-shadow:
     0 7px 16px rgba(60, 42, 18, 0.38),
@@ -280,7 +280,7 @@
 .ev-card--evidence {
   background: #fdfaf1;
   color: #33291c;
-  padding: 8px 8px 6px;
+  padding: 9px 9px 7px;
 }
 .ev-card--evidence .ev-card__inner {
   background: linear-gradient(180deg, #f7f0df, #f2e9d2);
@@ -351,7 +351,7 @@
   animation: ev-live-pulse 1.25s ease-out 1;
 }
 
-/* ---------- 卡片内容排版 ---------- */
+/* ---------- 卡片内容排版（Task 13：标题 3 行 / 正文 4 行 / 解读节选 / 标签） ---------- */
 .ev-card__inner {
   display: flex;
   flex-direction: column;
@@ -370,25 +370,78 @@
 }
 .ev-card__title {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   line-height: 1.32;
   letter-spacing: 0.005em;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
 .ev-card__body {
   margin: 0;
-  font-size: 11px;
-  line-height: 1.45;
-  opacity: 0.83;
+  font-size: 11.5px;
+  line-height: 1.5;
+  opacity: 0.85;
   text-align: justify;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
+}
+/* 深度解读节选（点击卡片后检视器内可读全文） */
+.ev-card__detail {
+  margin: 1px 0 0;
+  padding: 2px 0 1px 7px;
+  border-left: 2px solid rgba(146, 104, 38, 0.4);
+  font-size: 10.5px;
+  line-height: 1.48;
+  opacity: 0.72;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.ev-card__detail-mark {
+  margin-right: 3px;
+  font-size: 9px;
+  opacity: 0.8;
+}
+/* 类型小签：卡头右置，一眼读出这张卡是什么 */
+.ev-kind-chip {
+  flex: none;
+  margin-left: auto;
+  margin-top: 1px;
+  padding: 1px 5px 1.5px;
+  border-radius: 2px;
+  border: 1px solid rgba(94, 64, 30, 0.28);
+  background: rgba(255, 252, 242, 0.55);
+  font-size: 8.5px;
+  line-height: 1.2;
+  letter-spacing: 0.06em;
+  opacity: 0.82;
+  white-space: nowrap;
+}
+/* 标签 chips */
+.ev-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: 1px;
+}
+.ev-tag {
+  font-size: 8.5px;
+  line-height: 1.3;
+  padding: 1px 5px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 64, 30, 0.24);
+  background: rgba(255, 252, 242, 0.5);
+  opacity: 0.85;
+  max-width: 88px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ev-card__meta {
   display: flex;
@@ -401,6 +454,9 @@
 }
 .ev-chip {
   flex: none;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 8.5px;
   letter-spacing: 0.02em;
@@ -412,9 +468,38 @@
 }
 .ev-conf {
   flex: none;
-  font-size: 9px;
-  opacity: 0.62;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.85;
   letter-spacing: 0.02em;
+}
+.ev-conf-bar {
+  position: relative;
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(94, 64, 30, 0.22);
+  overflow: hidden;
+}
+.ev-conf-bar__fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+}
+.ev-conf-bar--hi .ev-conf-bar__fill { background: #2f7d4f; }
+.ev-conf-bar--md .ev-conf-bar__fill { background: #b45309; }
+.ev-conf-bar--lo .ev-conf-bar__fill { background: #8a7a64; }
+.ev-conf__num {
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+.ev-conf--warn .ev-conf__num { color: #b91c1c; }
+.ev-warn-flag {
+  flex: none;
+  font-size: 10px;
+  line-height: 1;
+  opacity: 0.85;
 }
 .ev-star {
   flex: none;
@@ -679,7 +764,7 @@
 
 /* ================================================================
    Serendip Lab · 工作台定制（追加段，勿动以上脚手架内容）
-   主题：暖纸 + 墨 + 侦探红绳；明亮为纸，暗为深胡桃
+   主题：暖纸 + 墨 + 红绳；明亮为纸，暗为深胡桃
    ================================================================ */
 
 :root {
@@ -722,7 +807,7 @@
   --ring: oklch(0.55 0.12 40);
 }
 
-/* 展示衬线字体（侦探档案感） */
+/* 展示衬线字体（档案质感） */
 .font-display {
   font-family: 'Noto Serif SC', 'Noto Serif CJK SC', 'Source Han Serif SC', Georgia,
     'Times New Roman', 'Songti SC', 'SimSun', serif;
@@ -762,7 +847,7 @@
   background: transparent;
 }
 
-/* 案情综述（结案陈词）排版 */
+/* 研究综述（markdown）排版 */
 .case-brief {
   color: oklch(0.3 0.015 60);
   font-size: 13.5px;
