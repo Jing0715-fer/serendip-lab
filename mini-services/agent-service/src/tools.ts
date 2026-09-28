@@ -415,7 +415,7 @@ export function toolsDoc(includeGraph: boolean): string {
   const lines = EXTERNAL_TOOLS.map((t) => `- ${t.name} | 参数 ${t.params} | 用途：${t.usage} | 返回：${t.returns}`)
   if (includeGraph) {
     lines.push(
-      '- add_evidence | 参数 {kind: question/hypothesis/evidence/insight/source/gap, title(≤60字), content(≤400字), sourceUrl?, sourceRef?, tags?, confidence?(0-1)} | 用途：把确认的事实/假说/洞见钉上证据墙 | 返回：{ok, nodeId}',
+      '- add_evidence | 参数 {kind: question/hypothesis/evidence/insight/source/gap, title(≤60字), content(≤400字), detail?(≤1200字，2-4句向用户解释该证据的含义与重要性), sourceUrl?(原文链接), sourceRef?(可识别格式如 PMID:123456 / DOI:10.x / UniProt:P04406), tags?, confidence?(0-1)} | 用途：把确认的事实/假说/洞见钉上证据墙（detail+sourceRef 会在卡片详情中展示并支持点击打开原文） | 返回：{ok, nodeId}',
       '- link_evidence | 参数 {from: 节点id或标题, to: 节点id或标题, relation: supports/contradicts/relates/derives/answers, label?} | 用途：连接证据与假说/问题 | 返回：{ok} 或 {error, candidates}',
       '- update_evidence | 参数 {title, patch:{confidence?, content?, status?, tags?}} | 用途：更新已有证据 | 返回：{ok}',
       '- note_gap | 参数 {question, why} | 用途：记录未解之谜/空白 | 返回：{ok, nodeId}',

@@ -9,6 +9,14 @@ import { broadcast, makeSseResponse } from './src/emitter'
 import { AgentRuntime, stateSnapshot } from './src/runtime'
 import { seedDemoSession } from './src/seed'
 import { sleep, clamp } from './src/util'
+import {
+  PROVIDER_CATALOG,
+  getLlmSettings,
+  saveLlmSettings,
+  maskedSettings,
+  type LlmSettings,
+} from './src/llm-config'
+import { testLlmConnection } from './src/llm'
 
 const PORT = 3002
 const VERSION = '1.0.0'
@@ -186,6 +194,44 @@ const server = Bun.serve({
     // --- 健康检查 ---
     if (method === 'GET' && path === '/api/agent/health') {
       return json({ ok: true, version: VERSION, uptimeSec: Math.round((Date.now() - startedAt) / 1000) })
+    }
+
+    // --- LLM 配置（Task 11） ---
+    if (path === '/api/agent/llm-config') {
+      if (method === 'GET') {
+        return json({ settings: maskedSettings(getLlmSettings()), catalog: PROVIDER_CATALOG })
+      }
+      if (method === 'PUT') {
+        const body = await readBody(request)
+        const patch: Partial<LlmSettings> = {}
+        if (typeof body.providerId === 'string' && body.providerId) patch.providerId = body.providerId
+        if (typeof body.model === 'string') patch.model = body.model.trim()
+        // apiKey：空串 = 不变；仅显式提供时覆盖
+        if (typeof body.apiKey === 'string' && body.apiKey.trim()) patch.apiKey = body.apiKey.trim()
+        if (body.clearApiKey === true) patch.apiKey = ''
+        if (typeof body.baseUrlOverride === 'string') patch.baseUrlOverride = body.baseUrlOverride.trim()
+        if (body.temperature === null || body.temperature === undefined) {
+          if ('temperature' in body) patch.temperature = null
+        } else {
+          const t = Number(body.temperature)
+          if (!Number.isNaN(t)) patch.temperature = clamp(t, 0, 2)
+        }
+        if (body.thinking && typeof body.thinking === 'object') {
+          const th: Partial<Record<string, boolean>> = {}
+          for (const face of ['interviewer', 'planner', 'investigator', 'synthesizer'] as const) {
+            if (typeof body.thinking[face] === 'boolean') th[face] = body.thinking[face]
+          }
+          patch.thinking = th as LlmSettings['thinking']
+        }
+        const saved = saveLlmSettings(patch)
+        return json({ ok: true, settings: maskedSettings(saved) })
+      }
+      return errJson('method not allowed', 405)
+    }
+
+    if (path === '/api/agent/llm-config/test' && method === 'POST') {
+      const result = await testLlmConnection()
+      return json(result)
     }
 
     // --- /api/agent/sessions 集合 ---

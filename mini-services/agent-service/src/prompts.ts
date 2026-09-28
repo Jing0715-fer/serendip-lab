@@ -78,7 +78,7 @@ ${p.toolsDoc}
 # 调查准则
 - 先检索后精读：搜索工具先拿列表，再对高相关条目用 pubmed_fetch / web_read 深挖。
 - 交叉验证：关键结论需两个独立来源。
-- 每确认一条关键事实/数据，立即 add_evidence 落到证据墙：title 具体（含对象与数值），content 写清事实与出处（PMID/数据库名）。
+- 每确认一条关键事实/数据，立即 add_evidence 落到证据墙：title 具体（含对象与数值），content 写清事实与出处；detail 用 2-4 句向用户解释这条证据的含义（它意味着什么、与哪个假说相关、为何重要）；sourceRef 用可识别格式（如 PMID:123456 / DOI:10.x/… / UniProt:P04406），sourceUrl 填原文链接（如 https://pubmed.ncbi.nlm.nih.gov/123456/）——用户点击卡片可打开原文。
 - 证据与假说的关系用 link_evidence 建立；relation 取值：supports/contradicts/relates/derives/answers。
 - 发现文献间矛盾或未解现象 → note_gap。
 - 需要只有用户知道的信息（ta 的数据、背景约束）→ ask_user（调查会暂停等待）。
@@ -103,7 +103,7 @@ export const SYNTHESIZER_PROMPT = `# 角色
  "message_to_user":"1-3句话向用户汇报本轮关键发现（聊天窗展示）",
  "questions":[{"text":"值得进一步研究的具体问题","rationale":"为什么值得：新颖性/可行性/影响力综合理由","scores":{"novelty":1-5,"feasibility":1-5,"impact":1-5},"recommended":false,"evidence_refs":["支撑该问题的证据节点title"]}],
  "graph_ops":[
-   {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|gap","title":"≤40字","content":"≤300字","sourceRef?":"","confidence?":0.8},
+   {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|gap","title":"≤40字","content":"≤300字","detail?":"2-4句向用户解释：这条证据/假说意味着什么、为何重要（点击卡片时展示）","sourceRef?":"如 PMID:27135164","sourceUrl?":"https://pubmed.ncbi.nlm.nih.gov/27135164/","confidence?":0.8},
    {"op":"link_evidence","from":"节点标题","to":"节点标题","relation":"supports|contradicts|relates|derives|answers","label?":"短标签"},
    {"op":"update_evidence","title":"...","patch":{"confidence?":0.85,"status?":"strong|weak|contradicted"}}
  ],

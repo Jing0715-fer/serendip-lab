@@ -22,10 +22,11 @@ Agent 通过苏格拉底式提问发掘你的科研兴趣，随后**长时间自
 | 🔎 **自主调查** | 进入调查后 Agent 长时间自主工作（预算可控：24/40/80 步），像侦探一样建立证据链 |
 | 🧰 **11 种调查工具** | PubMed esearch/esummary/efetch、Europe PMC、OpenAlex（引用热度）、UniProt、NCBI Gene、RCSB PDB、Taxonomy、ClinVar、Web 搜索、网页精读 |
 | 🤝 **人机协同** | 调查期间你随时补充线索（steering），Agent 在检查点纳入；遇到只有你知道的关键信息会主动 `ask_user` 挂起等待 |
-| 🧵 **侦探证据墙** | 问题（琥珀便签）→ 假说（青瓷便签）→ 证据（米白拍立得）→ 洞见（橙便签）→ 文献源（报纸灰卡）→ 待查空白（虚线卡），用红绳（支持/矛盾/相关/推出/回答）串成关系网 |
+| 🧵 **侦探证据墙** | 问题（琥珀便签）→ 假说（青瓷便签）→ 证据（米白拍立得）→ 洞见（橙便签）→ 文献源（报纸灰卡）→ 待查空白（虚线卡），用红绳（支持/矛盾/相关/推出/回答）串成关系网；点开任意卡片看**侦探解读**与**可点击的文献引用**（PMID/DOI/UniProt/PDB 自动解析为原文链接） |
 | 📜 **结案陈词** | 碎片证据被梳理成「迷雾 → 证据链 → 推演 → 未解之谜 → 下一步建议」的叙事弧 |
 | ⭐ **问题清单** | 综合师按新颖性/可行性/影响力为候选科学问题打分，标记最值得深挖的一个 |
 | 📤 **调查简报** | 一键导出 Markdown 简报（叙事 + 问题清单 + 证据档案） |
+| ⚙️ **LLM 配置** | 顶栏设置面板切换供应商（内置网关 / DeepSeek / OpenAI / Claude / Qwen / Kimi / SiliconFlow / Ollama / 自定义 OpenAI 兼容端点）· 模型 · 温度 · 分面孔长链推理开关 · 连接测试，PUT 后热生效 |
 
 ## 🖼️ 界面一览
 
@@ -47,6 +48,7 @@ Agent 通过苏格拉底式提问发掘你的科研兴趣，随后**长时间自
 | **AutoGPT / AgentGPT** | 预算约束（步数 + 墙钟时间）下的长时自主循环；每完成 2 个任务强制综合检查点 |
 | **Reflexion** | 双层自愈：JSON 解析失败→错误回灌重试；仍失败→纠错观察注入 scratchpad 改变下一步提示词；连续失败熔断暂停 |
 | **CAMEL / Socratic** | 访谈者人格与提问品味（一次一问、引用原话、挖掘矛盾） |
+| **DeepSeek Harness / pdb-tracker 供应商目录** | LLM 配置层：内置网关 + OpenAI 兼容适配器双通道，供应商目录驱动（baseURL/认证头/模型），thinking 按 agent 面孔独立开关 |
 
 **四张面孔**：访谈者（Interviewer）/ 规划师（Planner）/ 调查员（Investigator）/ 综合师（Synthesizer）各司其职；综合师还负责维护证据墙图结构（补问题/假说节点、拉红绳、调置信度）。
 
@@ -71,6 +73,7 @@ NCBI E-utilities · Europe PMC · OpenAlex · UniProt · RCSB PDB
 
 - **前端**：Next.js 16 App Router · React 19 · Tailwind CSS 4 · shadcn/ui · React Flow v12（自定义软木板节点 + 四层红绳渲染）· dagre 语义分列布局 · framer-motion · zustand
 - **后端**：独立 Bun 服务 · TypeScript 全栈 · 文本 ReAct 协议 · SQLite 检查点
+- **LLM 通道**：内置 z-ai 网关（GLM-4-Plus，支持 R1 式 thinking）为默认；顶栏「LLM 配置」可切换到任意 OpenAI 兼容供应商（DeepSeek / OpenAI / Claude / Qwen / Kimi / SiliconFlow / Ollama / 自定义端点），API Key 仅存本机 SQLite，支持环境变量兜底与连接测试
 
 ## 🚀 运行
 

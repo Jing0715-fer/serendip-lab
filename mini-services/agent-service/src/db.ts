@@ -196,7 +196,21 @@ CREATE INDEX IF NOT EXISTS idx_nodes_session ON nodes(session_id);
 CREATE INDEX IF NOT EXISTS idx_edges_session ON edges(session_id);
 CREATE INDEX IF NOT EXISTS idx_q_session ON questions(session_id);
 CREATE INDEX IF NOT EXISTS idx_act_session ON activity(session_id, id);
+CREATE TABLE IF NOT EXISTS settings(
+  key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
+);
 `)
+
+// 轻量迁移：老库补 nodes.detail 列（卡片详细说明，Task 11）
+try {
+  const cols = db.query('PRAGMA table_info(nodes)').all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'detail')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN detail TEXT')
+    console.log('[db] migrated: nodes.detail added')
+  }
+} catch (e) {
+  console.error('[db] migrate nodes.detail failed:', e)
+}
 
 // 启动时：未完成的会话标记 interrupted（phase 保留）
 db.exec(
@@ -218,6 +232,7 @@ type NodeRow = {
   tags: string; source_url: string | null; source_ref: string | null
   confidence: number | null; starred: number; pinned_by: string; status: string
   x: number | null; y: number | null; created_at: number; updated_at: number
+  detail: string | null
 }
 type EdgeRow = {
   id: string; session_id: string; source: string; target: string
@@ -250,6 +265,7 @@ function mapNode(r: NodeRow): BoardNode {
     kind: r.kind as NodeKind,
     title: r.title,
     content: r.content,
+    detail: r.detail ?? null,
     tags: JSON.parse(r.tags || '[]'),
     sourceUrl: r.source_url,
     sourceRef: r.source_ref,
@@ -455,10 +471,11 @@ export function insertNode(
   const id = n.id || uuid()
   const t = now()
   db.run(
-    `INSERT INTO nodes(id,session_id,kind,title,content,tags,source_url,source_ref,confidence,starred,pinned_by,status,x,y,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO nodes(id,session_id,kind,title,content,detail,tags,source_url,source_ref,confidence,starred,pinned_by,status,x,y,created_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id, sessionId, n.kind, n.title.slice(0, 60), (n.content || '').slice(0, 400),
+      (n.detail || '').slice(0, 1200) || null,
       JSON.stringify(n.tags || []), n.sourceUrl ?? null, n.sourceRef ?? null,
       n.confidence ?? null, n.starred ? 1 : 0, n.pinnedBy || 'agent', n.status || 'new',
       null, null, t, t,
@@ -466,6 +483,7 @@ export function insertNode(
   )
   return {
     id, kind: n.kind, title: n.title.slice(0, 60), content: (n.content || '').slice(0, 400),
+    detail: (n.detail || '').slice(0, 1200) || null,
     tags: n.tags || [], sourceUrl: n.sourceUrl ?? null, sourceRef: n.sourceRef ?? null,
     confidence: n.confidence ?? null, starred: !!n.starred, pinnedBy: n.pinnedBy || 'agent',
     status: n.status || 'new', createdAt: t, position: null,
@@ -503,10 +521,10 @@ export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pic
   db.run(`UPDATE nodes SET ${sets.join(',')}, updated_at=${now()} WHERE id=? AND session_id=?`, [...vals, nodeId, sessionId])
 }
 
-export function updateNodeContent(sessionId: string, nodeId: string, content: string, confidence: number | null, sourceRef: string | null, sourceUrl: string | null) {
+export function updateNodeContent(sessionId: string, nodeId: string, content: string, confidence: number | null, sourceRef: string | null, sourceUrl: string | null, detail?: string | null) {
   db.run(
-    `UPDATE nodes SET content=?, confidence=?, source_ref=COALESCE(?, source_ref), source_url=COALESCE(?, source_url), updated_at=${now()} WHERE id=? AND session_id=?`,
-    [content.slice(0, 400), confidence, sourceRef, sourceUrl, nodeId, sessionId]
+    `UPDATE nodes SET content=?, confidence=?, source_ref=COALESCE(?, source_ref), source_url=COALESCE(?, source_url), detail=COALESCE(?, detail), updated_at=${now()} WHERE id=? AND session_id=?`,
+    [content.slice(0, 400), confidence, sourceRef, sourceUrl, detail ? detail.slice(0, 1200) : null, nodeId, sessionId]
   )
 }
 

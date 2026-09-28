@@ -1,6 +1,9 @@
 // agent-api.ts — agent-service HTTP 客户端（全部走 Caddy 网关，相对路径 + XTransformPort）
 import type {
   BoardNode,
+  LlmConfigResponse,
+  LlmSettingsView,
+  LlmTestResult,
   ResearchQuestion,
   SessionFull,
   SessionState,
@@ -94,6 +97,22 @@ export const agentApi = {
       method: 'POST',
       json: { nodeId, starred },
     }),
+
+  // ---------- LLM 配置 ----------
+
+  getLlmConfig: () => api<LlmConfigResponse>('/llm-config'),
+
+  saveLlmConfig: (patch: {
+    providerId?: string;
+    model?: string;
+    apiKey?: string;
+    clearApiKey?: boolean;
+    baseUrlOverride?: string;
+    temperature?: number | null;
+    thinking?: Partial<Record<string, boolean>>;
+  }) => api<{ ok: boolean; settings: LlmSettingsView }>('/llm-config', { method: 'PUT', json: patch }),
+
+  testLlmConfig: () => api<LlmTestResult>('/llm-config/test', { method: 'POST' }),
 };
 
 export function sseUrl(sessionId: string): string {

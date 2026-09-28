@@ -1,13 +1,14 @@
 'use client';
 
-// node-inspector.tsx — 证据卡片详情抽屉：内容 / 来源 / 置信度 / 关系网
-import { ExternalLink, Star, Tag, X } from 'lucide-react';
+// node-inspector.tsx — 证据卡片详情抽屉：详细说明 / 可点击引用 / 置信度 / 关系网
+import { BookOpenText, ExternalLink, Star, Tag, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useStudio, selectInspectorNode, fmtTime } from '@/store/studio';
 import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, type EdgeRelation } from '@/lib/types';
+import { resolveCitationUrl, citationLabel } from '@/lib/citation';
 
 const REL_STYLE: Record<EdgeRelation, string> = {
   supports: 'border-red-300 bg-red-50 text-red-800 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300',
@@ -29,6 +30,7 @@ export function NodeInspector() {
   const titleOf = (id: string) => nodes.find((n) => n.id === id)?.title ?? id;
   const outgoing = edges.filter((e) => e.source === node.id);
   const incoming = edges.filter((e) => e.target === node.id);
+  const citationUrl = resolveCitationUrl(node.sourceRef, node.sourceUrl);
 
   return (
     <Sheet open onOpenChange={(v) => !v && openInspector(null)}>
@@ -60,16 +62,51 @@ export function NodeInspector() {
             {node.content || '（无详细内容）'}
           </div>
 
+          {/* 详细说明（agent 生成的深度解读） */}
+          {node.detail && node.detail.trim() && (
+            <div className="rounded-xl border border-amber-700/25 bg-[#fbf5e4] p-3 dark:border-amber-600/25 dark:bg-amber-950/25">
+              <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wider text-amber-800 dark:text-amber-300">
+                <BookOpenText size={12} aria-hidden="true" />
+                侦探解读
+              </div>
+              <p className="whitespace-pre-wrap text-[12.5px] leading-relaxed text-stone-700 dark:text-stone-200">
+                {node.detail}
+              </p>
+            </div>
+          )}
+
+          {/* 引用（可点击打开原文） */}
+          {(node.sourceRef || citationUrl) && (
+            <div className="rounded-xl border border-emerald-700/20 bg-emerald-50/60 p-2.5 dark:border-emerald-700/30 dark:bg-emerald-950/20">
+              <div className="mb-1 text-[11px] font-semibold tracking-wider text-emerald-800 dark:text-emerald-400">
+                文献引用
+              </div>
+              {citationUrl ? (
+                <a
+                  href={citationUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group/cite flex items-center gap-1.5 rounded-lg border border-emerald-700/30 bg-white/80 px-2.5 py-1.5 font-mono text-[11.5px] text-emerald-900 transition-colors hover:border-emerald-600 hover:bg-white dark:border-emerald-700/40 dark:bg-stone-900/60 dark:text-emerald-300 dark:hover:bg-stone-900"
+                  title={`打开原文：${citationUrl}`}
+                >
+                  <span className="truncate">{node.sourceRef ? citationLabel(node.sourceRef) : citationUrl}</span>
+                  <ExternalLink size={11} className="shrink-0 opacity-60 transition-opacity group-hover/cite:opacity-100" aria-hidden="true" />
+                </a>
+              ) : (
+                node.sourceRef && (
+                  <div className="px-1 font-mono text-[11.5px] text-stone-600 dark:text-stone-300">
+                    {node.sourceRef}
+                  </div>
+                )
+              )}
+            </div>
+          )}
+
           {/* 元信息 */}
           <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-stone-500 dark:text-stone-400">
-            {node.sourceRef && (
-              <Badge variant="outline" className="border-stone-300 font-mono text-[10.5px] dark:border-stone-600">
-                {node.sourceRef}
-              </Badge>
-            )}
-            {node.sourceUrl && (
+            {node.sourceUrl && citationUrl && (
               <a
-                href={node.sourceUrl}
+                href={citationUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="flex items-center gap-1 rounded-full border border-stone-300 px-2 py-0.5 text-[11px] text-emerald-800 underline-offset-2 hover:underline dark:border-stone-600 dark:text-emerald-400"

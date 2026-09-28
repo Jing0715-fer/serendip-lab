@@ -14,6 +14,7 @@ import {
   Pause,
   Play,
   Plus,
+  Settings2,
   Square,
   Sun,
   Trash2,
@@ -30,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { LogoMark } from './logo';
+import { LlmSettingsDialog } from './llm-settings-dialog';
 import { useStudio, isAgentWorking, fmtElapsed } from '@/store/studio';
 import { PHASE_LABEL } from '@/lib/types';
 import type { AgentStatus } from '@/lib/types';
@@ -68,6 +70,7 @@ export function TopBar() {
   const questions = useStudio((s) => s.questions);
   const { theme, setTheme } = useTheme();
   const [creating, setCreating] = useState(false);
+  const [llmSettingsOpen, setLlmSettingsOpen] = useState(false);
 
   const working = isAgentWorking(session?.status);
   const paused = session?.status === 'paused' || session?.status === 'interrupted';
@@ -287,6 +290,17 @@ export function TopBar() {
           <span className="hidden lg:inline">简报</span>
         </Button>
 
+        {/* LLM 设置 */}
+        <Button
+          size="icon"
+          variant="outline"
+          className="h-8 w-8 border-stone-300"
+          onClick={() => setLlmSettingsOpen(true)}
+          title="LLM 配置（供应商 / 模型 / 长链推理）"
+        >
+          <Settings2 size={14} />
+        </Button>
+
         {/* 明暗切换 */}
         <Button
           size="icon"
@@ -298,6 +312,8 @@ export function TopBar() {
           {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
         </Button>
       </div>
+
+      <LlmSettingsDialog open={llmSettingsOpen} onOpenChange={setLlmSettingsOpen} />
     </header>
   );
 }

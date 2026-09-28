@@ -23,6 +23,7 @@ import {
   type Edge,
   type EdgeProps,
 } from '@xyflow/react';
+import type { CSSProperties } from 'react';
 import type { EdgeRelation } from '@/lib/types';
 
 export type StringEdgeData = {
@@ -33,16 +34,19 @@ export type StringEdgeData = {
 };
 export type EvidenceFlowEdge = Edge<StringEdgeData>;
 
-/** 五种关系 → 绳子颜色 / 粗细 / 虚线节奏（图例与边共用同一份真源） */
+/** 五种关系 → 绳子颜色 / 粗细 / 虚线节奏（图例与边共用同一份真源）
+ *  v2.1：最小线宽提高到 2.2（用户反馈部分线太细看不清），
+ *  关系区分主要靠颜色与虚线节奏而非粗细；配合 non-scaling-stroke
+ *  （屏幕恒定线宽）保证任何缩放下绳子都清晰可辨。 */
 export const STRING_STYLE: Record<
   EdgeRelation,
   { color: string; width: number; dash?: string; ring?: boolean }
 > = {
-  supports: { color: '#b91c1c', width: 2, ring: true },
-  contradicts: { color: '#26221c', width: 2, dash: '7 4' },
-  relates: { color: '#8a7a64', width: 1.5 },
-  derives: { color: '#b45309', width: 1.5, dash: '2 5' },
-  answers: { color: '#15803d', width: 2 },
+  supports: { color: '#b91c1c', width: 2.6, ring: true },
+  contradicts: { color: '#26221c', width: 2.4, dash: '7 4' },
+  relates: { color: '#8a7a64', width: 2.2 },
+  derives: { color: '#b45309', width: 2.2, dash: '2 5' },
+  answers: { color: '#15803d', width: 2.6 },
 };
 
 /** 边标签小纸条的稳定微旋转 */
@@ -176,6 +180,7 @@ function StringEdge({
         transform="translate(0, 1.5)"
         opacity={opacity}
         pointerEvents="none"
+        vectorEffect="non-scaling-stroke"
       />
       {/* 第 2 层：同色 15% 透明度底衬，绳子的体积轮廓 */}
       <path
@@ -186,6 +191,7 @@ function StringEdge({
         strokeWidth={width + 2.5}
         strokeLinecap="round"
         pointerEvents="none"
+        vectorEffect="non-scaling-stroke"
       />
       {/* 第 3 层：主绳 */}
       <BaseEdge
@@ -198,18 +204,20 @@ function StringEdge({
           strokeDasharray: style.dash,
           strokeLinecap: 'round',
           opacity,
-        }}
+          vectorEffect: 'non-scaling-stroke',
+        } as CSSProperties}
       />
       {/* 第 4 层：上缘细高光，受光的绳股 */}
       <path
         d={path}
         fill="none"
         stroke="rgba(255,242,214,.32)"
-        strokeWidth={Math.max(0.6, width - 1.25)}
+        strokeWidth={Math.max(1, width - 1.25)}
         strokeLinecap="round"
         transform="translate(0, -0.75)"
         opacity={opacity}
         pointerEvents="none"
+        vectorEffect="non-scaling-stroke"
       />
 
       {/* supports 两端的小圆环：像绳环挂在图钉上（吸附在真实绳端） */}

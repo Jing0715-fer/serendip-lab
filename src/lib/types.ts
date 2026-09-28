@@ -38,6 +38,8 @@ export type BoardNode = {
   kind: NodeKind;
   title: string;
   content: string;
+  /** 详细说明：点击卡片后展示的深度解读（agent 生成，≤1200 字） */
+  detail: string | null;
   tags: string[];
   sourceUrl: string | null;
   sourceRef: string | null;
@@ -173,4 +175,54 @@ export const PHASE_LABEL: Record<SessionPhase, string> = {
   synthesizing: '结案推演',
   awaiting_user: '等你回应',
   done: '已结案',
+};
+
+/* ---------------- LLM 配置（agent-service /llm-config） ---------------- */
+
+export type AgentFace = 'interviewer' | 'planner' | 'investigator' | 'synthesizer';
+
+export const AGENT_FACE_LABEL: Record<AgentFace, string> = {
+  interviewer: '访谈者',
+  planner: '规划师',
+  investigator: '调查员',
+  synthesizer: '综合师',
+};
+
+export type ProviderModelInfo = { id: string; name: string; contextWindow?: number };
+
+export type ProviderProfileInfo = {
+  id: string;
+  displayName: string;
+  label: string;
+  baseURL: string;
+  apiKeyEnv: string;
+  defaultModel: string;
+  models: ProviderModelInfo[];
+  docsUrl: string;
+  keyless?: boolean;
+};
+
+export type LlmSettingsView = {
+  providerId: string;
+  model: string;
+  apiKey: string;
+  apiKeyMasked: string;
+  hasKey: boolean;
+  baseUrlOverride: string;
+  temperature: number | null;
+  thinking: Record<AgentFace, boolean>;
+};
+
+export type LlmConfigResponse = {
+  settings: LlmSettingsView;
+  catalog: ProviderProfileInfo[];
+};
+
+export type LlmTestResult = {
+  ok: boolean;
+  latencyMs: number;
+  model: string;
+  provider: string;
+  reply?: string;
+  error?: string;
 };
