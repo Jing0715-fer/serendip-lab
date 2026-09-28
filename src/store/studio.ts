@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { agentApi } from '@/lib/agent-api';
-import { PHASE_LABEL, currentLang } from '@/lib/i18n';
+import { PHASE_LABEL, STATUS_LABEL, currentLang } from '@/lib/i18n';
 import type {
   ActivityEvent,
   AgentStatus,
@@ -263,7 +263,10 @@ export const useStudio = create<StudioState>((set, get) => ({
         cur.interviewBusy &&
         !awaiting // awaiting 场景由 phase 事件解除
       ) {
-        void cur.loadSession(sessionId).then(() => useStudio.setState({ interviewBusy: false }));
+        void cur
+          .loadSession(sessionId)
+          .then(() => useStudio.setState({ interviewBusy: false }))
+          .catch(() => useStudio.setState({ interviewBusy: false })); // 拉全量失败也解锁，避免输入框永久锁死
       }
     }, 46000);
   },
@@ -282,7 +285,9 @@ export const useStudio = create<StudioState>((set, get) => ({
     // phase/status 变化经 SSE phase 事件到达；1.2s 后兜底刷新
     setTimeout(() => {
       const cur = useStudio.getState();
-      if (cur.session?.id === s.session.id) void cur.loadSession(cur.session.id);
+      if (cur.session?.id === s.session.id) {
+        void cur.loadSession(cur.session.id).catch(() => undefined);
+      }
     }, 1200);
   },
 
@@ -304,7 +309,14 @@ export const useStudio = create<StudioState>((set, get) => ({
         return p ? { ...n, position: { x: p.x, y: p.y } } : n;
       }),
     });
-    void agentApi.saveLayout(s.session.id, positions).catch(() => undefined);
+    void agentApi.saveLayout(s.session.id, positions).catch(() => {
+      // 落库失败提醒用户：刷新后会回到上次保存的排布（本地乐观坐标与 DB 不一致）
+      toast.error(
+        currentLang() === 'zh'
+          ? '画布布局保存失败，刷新后将恢复到上次保存的排布'
+          : 'Failed to save the layout — refresh will restore the last saved arrangement'
+      );
+    });
   },
 
   toggleStar: async (nodeId, starred) => {
@@ -347,7 +359,10 @@ export const useStudio = create<StudioState>((set, get) => ({
     setTimeout(() => {
       const cur = useStudio.getState();
       if (cur.session?.id === sid && cur.directionsBusy) {
-        void cur.loadSession(sid).then(() => useStudio.setState({ directionsBusy: false }));
+        void cur
+          .loadSession(sid)
+          .then(() => useStudio.setState({ directionsBusy: false }))
+          .catch(() => useStudio.setState({ directionsBusy: false }));
       }
     }, 120000);
   },
@@ -398,10 +413,18 @@ export const useStudio = create<StudioState>((set, get) => ({
             id: evtId('phase'),
             ts: Date.now(),
             type: 'phase',
-            summary: `→ ${PHASE_LABEL[ev.phase][currentLang()]} · ${ev.status}`,
+            summary: `→ ${PHASE_LABEL[ev.phase][currentLang()]} · ${STATUS_LABEL[ev.status][currentLang()]}`,
           }),
         });
-        if (ev.status === 'done' || ev.status === 'idle' || ev.status === 'error') {
+        // 用户回答 ask_user 后后端恢复研究（status→running）——此时也解锁输入框，
+        // 否则要等到下一次阶段性综合才能继续补充素材
+        if (
+          ev.status === 'done' ||
+          ev.status === 'idle' ||
+          ev.status === 'error' ||
+          ev.status === 'running' ||
+          ev.status === 'thinking'
+        ) {
           set({ toolRunning: null, interviewBusy: false });
         }
         break;
@@ -476,6 +499,9 @@ export const useStudio = create<StudioState>((set, get) => ({
       }
       case 'error': {
         set({ toolRunning: null, interviewBusy: false, directionsBusy: false });
+        if (ev.message) {
+          toast.error(ev.message);
+        }
         break;
       }
     }

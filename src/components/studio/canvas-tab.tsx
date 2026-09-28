@@ -1,8 +1,9 @@
 'use client';
 
-// canvas-tab.tsx — 证据墙标签页：EvidenceBoard + 添加素材 + 节点检视（Task 13 双语）
+// canvas-tab.tsx — 证据墙标签页：EvidenceBoard + 添加素材 + 节点检视（Task 13 双语 → Task 14 一键整理）
 import dynamic from 'next/dynamic';
-import { MapPin, Microscope, Plus } from 'lucide-react';
+import { useState } from 'react';
+import { LayoutGrid, MapPin, Microscope, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useStudio } from '@/store/studio';
 import { fmt, useT } from '@/lib/i18n';
@@ -37,6 +38,7 @@ export function CanvasTab() {
   const saveLayout = useStudio((s) => s.saveLayout);
   const setAddClue = useStudio((s) => s.setAddClue);
   const t = useT();
+  const [organizeTick, setOrganizeTick] = useState(0);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -51,7 +53,18 @@ export function CanvasTab() {
         <Button
           size="sm"
           variant="outline"
+          disabled={nodes.length < 2}
           className="ml-auto h-7 gap-1 border-stone-300 bg-white/70 text-[12px] dark:border-stone-700 dark:bg-stone-800/70"
+          onClick={() => setOrganizeTick((v) => v + 1)}
+          title={t('canvas.organizeHint')}
+        >
+          <LayoutGrid size={13} />
+          {t('canvas.organize')}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 gap-1 border-stone-300 bg-white/70 text-[12px] dark:border-stone-700 dark:bg-stone-800/70"
           onClick={() => setAddClue(true)}
         >
           <Plus size={13} />
@@ -81,6 +94,7 @@ export function CanvasTab() {
             liveIds={liveIds}
             onNodeClick={(n) => openInspector(n.id)}
             onPositionsChange={(positions) => saveLayout(positions)}
+            organizeSignal={organizeTick}
           />
         )}
       </div>

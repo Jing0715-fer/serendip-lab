@@ -42,11 +42,13 @@ export const STRING_STYLE: Record<
   EdgeRelation,
   { color: string; width: number; dash?: string; ring?: boolean }
 > = {
-  supports: { color: '#b91c1c', width: 2.6, ring: true },
-  contradicts: { color: '#26221c', width: 2.4, dash: '7 4' },
-  relates: { color: '#8a7a64', width: 2.2 },
-  derives: { color: '#b45309', width: 2.2, dash: '2 5' },
-  answers: { color: '#15803d', width: 2.6 },
+  // 颜色走 CSS 变量：暗色模式下暗色绳（碳黑/麻灰）在深胡桃木板上对比度不足，
+  // 由 globals.css 的 .dark 覆盖为亮色变体（VLM 视觉审查发现）
+  supports: { color: 'var(--string-supports)', width: 2.6, ring: true },
+  contradicts: { color: 'var(--string-contradicts)', width: 2.4, dash: '7 4' },
+  relates: { color: 'var(--string-relates)', width: 2.2 },
+  derives: { color: 'var(--string-derives)', width: 2.2, dash: '2 5' },
+  answers: { color: 'var(--string-answers)', width: 2.6 },
 };
 
 /** 边标签小纸条的稳定微旋转 */

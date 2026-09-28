@@ -252,9 +252,10 @@ try {
   console.error('[db] migrate sessions.directions failed:', e)
 }
 
-// 启动时：未完成的会话标记 interrupted（phase 保留）
+// 启动时：未完成的会话标记 interrupted；awaiting_user 一并复位为 interview
+// （P1 修复：runtime 已随进程丢失，若保留 awaiting_user，用户回复将无法注入且输入框永久锁死）
 db.exec(
-  `UPDATE sessions SET status='interrupted', updated_at=${now()} WHERE status IN ('running','thinking','paused','awaiting_user')`
+  `UPDATE sessions SET status='interrupted', phase=CASE WHEN phase='awaiting_user' THEN 'interview' ELSE phase END, updated_at=${now()} WHERE status IN ('running','thinking','paused','awaiting_user')`
 )
 
 // ---------- 行映射 ----------
@@ -554,16 +555,13 @@ export function listNodes(sessionId: string): BoardNode[] {
 }
 
 export function findNodeByTitle(sessionId: string, title: string): BoardNode | null {
-  // 精确匹配（忽略大小写与空白）
+  // 仅精确匹配（忽略大小写与空白）：子串包含会把不同节点误判为同一节点，
+  // 导致 add_evidence 把新证据当作旧节点更新、内容被覆盖丢失（P2 修复）。
+  // 模糊引用清由 link_evidence 的 resolve 自行处理并向模型返回候选列表消歧。
   const nodes = listNodes(sessionId)
   const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
   const t = norm(title)
-  let hit = nodes.find((n) => norm(n.title) === t)
-  if (hit) return hit
-  // 子串包含匹配 → 多命中取最新
-  const contains = nodes.filter((n) => norm(n.title).includes(t) || t.includes(norm(n.title)))
-  if (contains.length) return contains[contains.length - 1]
-  return null
+  return nodes.find((n) => norm(n.title) === t) ?? null
 }
 
 export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pick<BoardNode, 'confidence' | 'content' | 'status' | 'tags' | 'title' | 'starred'>>) {

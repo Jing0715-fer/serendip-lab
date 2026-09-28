@@ -82,15 +82,16 @@ async function handleChat(id: string, request: Request) {
 
   // 1) awaiting_user：用户回复即答案 → 注入并恢复
   if (row.phase === 'awaiting_user') {
-    const msg = insertMessage(id, { role: 'user', kind: 'chat', content: text })
-    broadcast(id, 'message', msg)
     const injected = runtime.injectUserAnswer(text)
-    if (!injected) {
-      // runtime 不在等待（如服务重启后）：转为 steer 入队
-      insertMessage(id, { role: 'user', kind: 'steer', content: text })
-      runtime.steeringQueue.push(text)
+    if (injected) {
+      const msg = insertMessage(id, { role: 'user', kind: 'chat', content: text })
+      broadcast(id, 'message', msg)
+      return json({ ok: true, mode: 'queued' })
     }
-    return json({ ok: true, mode: 'queued' })
+    // P1 修复：runtime 不在等待（服务重启后 DB 残留 awaiting_user）→ 复位为访谈态走下方链路，
+    // 不再重复插 steer 消息（旧逻辑同一句话先插 chat 再插 steer，聊天窗出现两条且 phase 永久卡死）
+    updateSessionFields(id, { phase: 'interview', status: 'idle' })
+    broadcast(id, 'phase', { phase: 'interview', status: 'idle' })
   }
 
   // 2) 调查类 phase：steer 入队
@@ -143,6 +144,16 @@ async function handleResearch(id: string, request: Request) {
       const rt = AgentRuntime.get(id)
       if (rt.running) {
         for (let i = 0; i < 600 && rt.running; i++) await sleep(200)
+      }
+      // P2 修复：120s 后旧循环仍未收尾（如超长综合叠 429 退避）→ 向前端报错而非静默丢弃
+      if (rt.running) {
+        const lang = getSessionLang(id)
+        broadcast(id, 'error', {
+          message: lang === 'en'
+            ? 'The previous run is still wrapping up — please try starting again in a minute.'
+            : '上一轮研究仍在收尾，请稍候一分钟再启动。',
+        })
+        return
       }
       console.log(`[research] session=${id} focus=${focus || '(auto)'} maxSteps=${maxSteps} maxMinutes=${maxMinutes}`)
       await rt.start(focus, maxSteps, maxMinutes)
@@ -312,8 +323,9 @@ const server = Bun.serve({
           return json({ ok: true })
         }
         if (method === 'DELETE') {
-          const rt = AgentRuntime.find(id)
-          rt?.stop()
+          // P2 修复：stop + 从 runtimes Map 移除（Map 只增不减会造成长驻进程内存缓慢增长；
+          // 旧实例异步收尾时对已删会话的孤儿写入无外键约束、无订阅者，无副作用）
+          AgentRuntime.dispose(id)
           deleteSession(id)
           console.log(`[session] deleted: ${id}`)
           return json({ ok: true })
@@ -405,8 +417,14 @@ const server = Bun.serve({
 console.log(`[agent-service] listening on port ${PORT} (v${VERSION})`)
 console.log(`[agent-service] db at ${process.cwd()}/data/serendip.db`)
 
-// 每分钟打印运行中会话与 SSE 连接概况（写入 dev.log 便于观察）
+// 每分钟打印运行中会话与 SSE 连接概况（写入 dev.log 便于观察）；顺带清理已无会话的死 runtime
+// 注：bun --hot 局部热重载可能让 index.ts 拿到旧模块图的 AgentRuntime（缺新方法）→ 防御性包裹
 setInterval(() => {
+  try {
+    AgentRuntime.reapDead()
+  } catch {
+    /* 热重载后旧模块图无此方法，下次完整重启即恢复 */
+  }
   const sessions = listSessionSummaries().filter((s) => s.status === 'running' || s.status === 'thinking' || s.status === 'awaiting_user')
   if (sessions.length) {
     console.log(`[heartbeat] active: ${sessions.map((s) => `${s.id.slice(0, 8)}(${s.phase}/${s.status})`).join(', ')}`)

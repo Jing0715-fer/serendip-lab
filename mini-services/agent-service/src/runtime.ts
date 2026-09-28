@@ -56,6 +56,12 @@ export function stateSnapshot(sessionId: string): Record<string, unknown> {
 }
 
 // ---------- 证据墙摘要 ----------
+
+/** 按会话语言取双语文案（活动时间线 insertActivity 用，EN 会话不再混中文） */
+function L(sessionId: string, zh: string, en: string): string {
+  return getSessionLang(sessionId) === 'en' ? en : zh
+}
+
 function wallSummary(sessionId: string): string {
   const nodes = listNodes(sessionId)
   if (!nodes.length) return '（证据墙尚为空）'
@@ -116,6 +122,22 @@ export class AgentRuntime {
     return AgentRuntime.runtimes.get(sessionId)
   }
 
+  /** 停止并从实例表移除（会话删除时调用，防 Map 无限增长） */
+  static dispose(sessionId: string) {
+    const rt = AgentRuntime.runtimes.get(sessionId)
+    if (rt) {
+      rt.stop()
+      AgentRuntime.runtimes.delete(sessionId)
+    }
+  }
+
+  /** 清理会话已不存在且不在运行的死实例（心跳周期调用） */
+  static reapDead() {
+    for (const [id, rt] of AgentRuntime.runtimes) {
+      if (!rt.running && !getSessionRow(id)) AgentRuntime.runtimes.delete(id)
+    }
+  }
+
   static isActive(sessionId: string): boolean {
     const rt = AgentRuntime.runtimes.get(sessionId)
     return !!rt && rt.running
@@ -157,14 +179,14 @@ export class AgentRuntime {
 
   private remainingText(): string {
     const b = getBudget(this.sessionId)
-    const elapsed = b.startedAt ? now() - b.startedAt : 0
+    const elapsed = b.startedAt ? now() - b.startedAt : b.elapsedMs
     return `${Math.max(0, b.maxSteps - b.stepsUsed)} 步 / ${Math.max(0, Math.round((b.maxMinutes * 60_000 - elapsed) / 60_000))} 分钟`
   }
 
   private persistStep() {
     // checkpoint：预算 + 计划（任务 done 状态）落库，然后广播全量 state
     const b = getBudget(this.sessionId)
-    b.elapsedMs = b.startedAt ? now() - b.startedAt : 0
+    b.elapsedMs = b.startedAt ? now() - b.startedAt : b.elapsedMs
     saveBudget(this.sessionId, b)
     const p = getPlan(this.sessionId)
     if (p) savePlan(this.sessionId, p)
@@ -175,11 +197,27 @@ export class AgentRuntime {
   pause() {
     if (!this.running) return
     this.paused = true
+    // P2 修复：冻结预算时钟 —— 已耗时固化进 elapsedMs、startedAt 置空，
+    // 否则暂停 20 分钟后 resume，循环顶部预算即耗尽直接收尾
+    const b = getBudget(this.sessionId)
+    if (b.startedAt) {
+      b.elapsedMs = now() - b.startedAt
+      b.startedAt = null
+      saveBudget(this.sessionId, b)
+    }
     this.setPhase(null, 'paused')
   }
 
   resume() {
     this.paused = false
+    // P2 修复：从累计时长续走预算时钟
+    if (this.running) {
+      const b = getBudget(this.sessionId)
+      if (!b.startedAt) {
+        b.startedAt = now() - b.elapsedMs
+        saveBudget(this.sessionId, b)
+      }
+    }
     if (this.resumeResolve) {
       const r = this.resumeResolve
       this.resumeResolve = null
@@ -281,14 +319,18 @@ export class AgentRuntime {
         // 全部任务完成 → 综合判断是否开下一轮
         const synth = await this.callSynthesizer(false)
         const b = getBudget(this.sessionId)
-        const enoughBudget = b.maxSteps - b.stepsUsed >= 5 && b.maxMinutes * 60_000 - (b.startedAt ? now() - b.startedAt : 0) > 120_000
+        const elapsed = b.startedAt ? now() - b.startedAt : b.elapsedMs
+        const enoughBudget = b.maxSteps - b.stepsUsed >= 5 && b.maxMinutes * 60_000 - elapsed > 120_000
         if (!synth?.continue || !enoughBudget) return 'completed'
         plan = await this.callPlanner(synth.next_focus || focus)
         continue
       }
 
+      const stepsBefore = getBudget(this.sessionId).stepsUsed
       await this.investigate(task)
       tasksSinceSynth++
+      // P2 修复：按实际消耗步数同步自增（原实现从不 ++，步数触发的阶段性综合是死逻辑）
+      stepsSinceSynth += getBudget(this.sessionId).stepsUsed - stepsBefore
       if (this.paused && !this.stopFlag) {
         // 熔断或用户暂停：挂起
         await this.waitIfPaused()
@@ -327,7 +369,7 @@ export class AgentRuntime {
         if (out.kind === 'llm') {
           // LLM 调用失败（429/网络）：退避后重试，宽松熔断（5 次）
           llmFails++
-          insertActivity(this.sessionId, { type: 'notice', summary: `LLM 调用失败（${llmFails}/5）：${out.error}`, ok: false })
+          insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, `LLM 调用失败（${llmFails}/5）`, `LLM call failed (${llmFails}/5)`)}: ${out.error}`, ok: false })
           await sleep(5000)
           if (llmFails >= 5) {
             this.paused = true
@@ -345,7 +387,9 @@ export class AgentRuntime {
           observation:
             'ERROR: 你上一次的输出无法解析为合法的 JSON 动作（不要在 JSON 外加任何说明文字、不要用全角引号、确保字符串内的引号被转义）。请严格输出单个 JSON 对象：{"thought":"...","action":{"tool":"...","args":{...}}}',
         })
-        insertActivity(this.sessionId, { type: 'notice', summary: `步骤输出解析失败（${parseFails}/3），已注入纠错反馈`, ok: false })
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+          `步骤输出解析失败（${parseFails}/3），已注入纠错反馈`,
+          `Step output parse failure (${parseFails}/3) — corrective feedback injected`), ok: false })
         if (parseFails >= 3) {
           this.paused = true
           this.setPhase(null, 'paused')
@@ -370,7 +414,7 @@ export class AgentRuntime {
         task.summary = String(args.summary || '').slice(0, 400)
         this.persistTask(task)
         this.persistStep()
-        insertActivity(this.sessionId, { type: 'notice', summary: `任务完成: ${oneLine(task.goal, 80)} — ${oneLine(task.summary || '', 150)}` })
+        insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '任务完成', 'Task completed')}: ${oneLine(task.goal, 80)} — ${oneLine(task.summary || '', 150)}` })
         return
       }
 
@@ -488,7 +532,7 @@ export class AgentRuntime {
       confidence,
       pinnedBy: 'agent',
     })
-    insertActivity(this.sessionId, { type: 'notice', summary: `新增证据节点 [${kind}] ${node.title}` })
+    insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '新增证据节点', 'New card pinned')} [${kind}] ${node.title}` })
     this.emitState()
     return { ok: true, nodeId: node.id, title: node.title }
   }
@@ -535,7 +579,7 @@ export class AgentRuntime {
 
     const edge = insertEdge(this.sessionId, finalSrc.id, finalDst.id, relation, args.label ? String(args.label) : null)
     if (!edge) return { ok: true, deduped: true, note: '该关系边已存在' }
-    insertActivity(this.sessionId, { type: 'notice', summary: `连接 ${finalSrc.title} --${relation}--> ${finalDst.title}` })
+    insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '连接', 'Link')} ${finalSrc.title} --${relation}--> ${finalDst.title}` })
     this.emitState()
     return { ok: true, edgeId: edge.id }
   }
@@ -564,7 +608,7 @@ export class AgentRuntime {
     if (!question) return { error: '缺少 question' }
     const why = String(args.why || '').trim()
     const node = insertNode(this.sessionId, { kind: 'gap', title: question, content: why, pinnedBy: 'agent' })
-    insertActivity(this.sessionId, { type: 'notice', summary: `记录待查空白: ${node.title}` })
+    insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '记录待查空白', 'Gap noted')}: ${node.title}` })
     this.emitState()
     return { ok: true, nodeId: node.id }
   }
@@ -729,14 +773,14 @@ export class AgentRuntime {
       steering: this.steeringBlock(),
       toolsDoc: toolsDoc(true),
       remainingSteps: Math.max(0, b.maxSteps - b.stepsUsed),
-      remainingMinutes: Math.max(0, Math.round((b.maxMinutes * 60_000 - (b.startedAt ? now() - b.startedAt : 0)) / 60_000)),
+      remainingMinutes: Math.max(0, Math.round((b.maxMinutes * 60_000 - (b.startedAt ? now() - b.startedAt : b.elapsedMs)) / 60_000)),
       langDirective: langDirective(getSessionLang(this.sessionId)),
     })
     const userPrompt = `# 研究历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence 落到证据墙（预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
     const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm(), { face: 'investigator' })
     if (!res.ok) {
-      const isLlmFailure = /LLM (重试)?调用失败/.test(res.error)
-      return { ok: false, kind: isLlmFailure ? 'llm' : 'parse', error: res.error }
+      // P2 修复：直接读结构化 kind，不再靠中文错误文案正则耦合（llm.ts 改文案不影响熔断分类）
+      return { ok: false, kind: res.kind === 'llm' ? 'llm' : 'parse', error: res.error }
     }
     const v = res.value
     if (!v || !v.action || typeof v.action.tool !== 'string') {
@@ -776,14 +820,16 @@ export class AgentRuntime {
     let res = res0
     if (!res.ok) {
       for (let i = 1; i <= 2; i++) {
-        insertActivity(this.sessionId, { type: 'notice', summary: `综合失败（${res.error.slice(0, 80)}），${20 * i}s 后重试 ${i}/2`, ok: false })
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+          `综合失败（${res.error.slice(0, 80)}），${20 * i}s 后重试 ${i}/2`,
+          `Synthesis failed (${res.error.slice(0, 80)}) — retry ${i}/2 in ${20 * i}s`), ok: false })
         await sleep(20_000 * i)
         res = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), { face: 'synthesizer' })
         if (res.ok) break
       }
     }
     if (!res.ok) {
-      insertActivity(this.sessionId, { type: 'notice', summary: `综合失败: ${res.error}`, ok: false })
+      insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '综合失败', 'Synthesis failed')}: ${res.error}`, ok: false })
       return null
     }
     const v: SynthOut = res.value

@@ -96,6 +96,19 @@ async function llmOnceCustom(
   }
 }
 
+/** 单次调用硬超时包装（Promise.race）：不中断底层请求，但解除循环阻塞，防挂死驱动循环 */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let tid: ReturnType<typeof setTimeout> | undefined
+  const timer = new Promise<never>((_, reject) => {
+    tid = setTimeout(() => reject(new Error(`${label}（${Math.round(ms / 1000)}s）`)), ms)
+  })
+  try {
+    return (await Promise.race([p, timer])) as T
+  } finally {
+    if (tid) clearTimeout(tid)
+  }
+}
+
 /** 底层单次调用（按配置分流） */
 async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts): Promise<string> {
   const s = getLlmSettings()
@@ -103,15 +116,20 @@ async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts)
     return llmOnceCustom(systemPrompt, userPrompt, opts?.face)
   }
   // builtin：z-ai 网关（系统提示按 SDK 约定走 assistant 角色）
+  // P1 修复：SDK 默认超时可达 10 分钟，叠加退避会把整轮 Agent 循环挂死 → 与 custom 通道同标准的硬超时
   const z = await getZai()
-  const completion = await z.chat.completions.create({
-    messages: [
-      { role: 'assistant', content: systemPrompt },
-      { role: 'user', content: userPrompt },
-    ],
-    thinking: { type: thinkingFor(opts?.face) ? 'enabled' : 'disabled' },
-    ...(s.temperature != null ? { temperature: s.temperature } : {}),
-  })
+  const completion = await withTimeout(
+    z.chat.completions.create({
+      messages: [
+        { role: 'assistant', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      thinking: { type: thinkingFor(opts?.face) ? 'enabled' : 'disabled' },
+      ...(s.temperature != null ? { temperature: s.temperature } : {}),
+    }),
+    150_000,
+    'LLM 请求超时'
+  )
   return completion.choices[0]?.message?.content ?? ''
 }
 
@@ -147,12 +165,12 @@ export async function llmJson<T = any>(
   userPrompt: string,
   onLlmCall?: () => void,
   opts?: LlmOpts
-): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
+): Promise<{ ok: true; value: T } | { ok: false; kind: 'llm' | 'parse'; error: string }> {
   let raw = ''
   try {
     raw = await llm(systemPrompt, userPrompt, opts)
   } catch (e) {
-    return { ok: false, error: `LLM 调用失败: ${e instanceof Error ? e.message : String(e)}` }
+    return { ok: false, kind: 'llm', error: `LLM 调用失败: ${e instanceof Error ? e.message : String(e)}` }
   }
   onLlmCall?.()
 
@@ -172,10 +190,10 @@ export async function llmJson<T = any>(
       if (parsed) return { ok: true, value: parsed }
       raw = raw2
     } catch (e) {
-      return { ok: false, error: `LLM 重试调用失败: ${e instanceof Error ? e.message : String(e)}` }
+      return { ok: false, kind: 'llm', error: `LLM 重试调用失败: ${e instanceof Error ? e.message : String(e)}` }
     }
   }
-  return { ok: false, error: '输出仍无法解析为 JSON' }
+  return { ok: false, kind: 'parse', error: '输出仍无法解析为 JSON' }
 }
 
 /** 连接测试：一次极小调用，返回延迟与模型名（设置面板"测试连接"用） */

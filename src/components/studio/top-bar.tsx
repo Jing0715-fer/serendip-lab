@@ -207,7 +207,7 @@ export function TopBar() {
           {sessions.map((s) => (
             <DropdownMenuItem
               key={s.id}
-              onClick={() => void loadSession(s.id)}
+              onClick={() => void loadSession(s.id).catch((e) => toast.error(fmt(t('toast.loadFailed'), { msg: e.message })))}
               className="gap-2 text-[13px]"
             >
               <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: s.id === session?.id ? '#b45309' : 'transparent' }} />
@@ -253,7 +253,9 @@ export function TopBar() {
             <DropdownMenuItem
               onClick={() => {
                 if (confirm(fmt(t('menu.confirmDelete'), { title: session.title }))) {
-                  void deleteSession(session.id).then(() => toast.success(t('toast.deleted')));
+                  void deleteSession(session.id)
+                    .then(() => toast.success(t('toast.deleted')))
+                    .catch((e) => toast.error(fmt(t('toast.deleteFailed'), { msg: e.message })));
                 }
               }}
               className="gap-2 text-[13px] text-red-700 focus:text-red-700"

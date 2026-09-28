@@ -189,7 +189,9 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         model: effectiveModel,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         baseUrlOverride,
-        ...(temperature.trim() === '' ? { temperature: null } : { temperature: Number(temperature) }),
+        ...(temperature.trim() === '' || !Number.isFinite(Number(temperature))
+          ? { temperature: null }
+          : { temperature: Number(temperature) }),
         thinking,
       });
       savedProviderId.current = providerId;
@@ -214,7 +216,9 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         model: effectiveModel,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         baseUrlOverride,
-        ...(temperature.trim() === '' ? { temperature: null } : { temperature: Number(temperature) }),
+        ...(temperature.trim() === '' || !Number.isFinite(Number(temperature))
+          ? { temperature: null }
+          : { temperature: Number(temperature) }),
         thinking,
       });
       savedProviderId.current = providerId;

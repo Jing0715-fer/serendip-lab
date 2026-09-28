@@ -126,6 +126,22 @@
    契约：docs/ARCHITECTURE.md §10.3 —— 全程禁用 indigo / blue
    ===================================================================== */
 
+/* ---------- 红绳颜色令牌：亮色原值 / 暗色亮化变体（Task 14 VLM 审查发现暗绳对比度不足） ---------- */
+:root {
+  --string-supports: #b91c1c; /* 红绳 · 支持 */
+  --string-contradicts: #26221c; /* 碳黑虚线 · 矛盾 */
+  --string-relates: #8a7a64; /* 麻绳 · 相关 */
+  --string-derives: #b45309; /* 赭石点线 · 推导 */
+  --string-answers: #15803d; /* 绿绳 · 回答 */
+}
+.dark {
+  --string-supports: #e05a4e; /* 亮红陶 */
+  --string-contradicts: #ecdfc8; /* 亮羊皮纸——深胡桃木上如粉笔线 */
+  --string-relates: #c9b896; /* 亮麻绳 */
+  --string-derives: #f2ac52; /* 亮琥珀（VLM 二轮评估再提亮） */
+  --string-answers: #46c47e; /* 亮苔绿 */
+}
+
 /* ---------- 软木板外框：深胡桃木 + 木纹 + 内阴影 ---------- */
 .corkboard-frame {
   position: absolute;

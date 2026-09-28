@@ -4,7 +4,7 @@
 // Agent 产出语言由前端随请求透传 lang 到 agent-service，后端按会话注入语言指令。
 import { useCallback } from 'react';
 import { create } from 'zustand';
-import type { AgentFace, EdgeRelation, NodeKind, SessionPhase } from './types';
+import type { AgentFace, AgentStatus, EdgeRelation, NodeKind, SessionPhase } from './types';
 
 export type Lang = 'zh' | 'en';
 const STORAGE_KEY = 'serendip-lang';
@@ -84,6 +84,7 @@ const DICT = {
   'toast.projectCreated': ['新课题已创建', 'New project created'],
   'toast.demoLoaded': ['示例课题已载入', 'Demo project loaded'],
   'toast.deleted': ['已删除', 'Deleted'],
+  'toast.deleteFailed': ['删除失败：{msg}', 'Failed to delete: {msg}'],
   'toast.createFailed': ['创建失败：{msg}', 'Failed to create: {msg}'],
   'toast.loadFailed': ['载入失败：{msg}', 'Failed to load: {msg}'],
   'settings.llmTitle': ['LLM 配置（供应商 / 模型 / 长链推理）', 'LLM settings (provider / model / reasoning)'],
@@ -214,6 +215,12 @@ const DICT = {
     'Chat with Serendip about your curiosity first; once autonomous research starts, the evidence, hypotheses and insights it finds will be pinned here one by one, strung together by red threads.',
   ],
   'canvas.legend': ['图例', 'Legend'],
+  'canvas.organize': ['一键整理', 'Tidy up'],
+  'canvas.organizeHint': [
+    '按「课题 → 假说 → 证据 → 来源」语义分列重新排布全部卡片',
+    'Re-arrange all cards into semantic columns: question → hypothesis → evidence → source',
+  ],
+  'canvas.organized': ['画布已重新整理', 'Canvas re-organized'],
   'canvas.stamp': ['灵感引擎 · 证据档案', 'EVIDENCE ARCHIVE'],
 
   /* 添加素材对话框 */
@@ -377,6 +384,17 @@ export const PHASE_LABEL: Record<SessionPhase, Record<Lang, string>> = {
   synthesizing: { zh: '综合综述中', en: 'Synthesizing' },
   awaiting_user: { zh: '等你回应', en: 'Awaiting you' },
   done: { zh: '已完成', en: 'Completed' },
+};
+
+export const STATUS_LABEL: Record<AgentStatus, Record<Lang, string>> = {
+  idle: { zh: '待命', en: 'idle' },
+  thinking: { zh: '思考中', en: 'thinking' },
+  running: { zh: '进行中', en: 'running' },
+  paused: { zh: '已暂停', en: 'paused' },
+  awaiting_user: { zh: '等待你的回应', en: 'awaiting your input' },
+  done: { zh: '已完成', en: 'done' },
+  error: { zh: '出错', en: 'error' },
+  interrupted: { zh: '已中断', en: 'interrupted' },
 };
 
 export const AGENT_FACE_LABEL: Record<AgentFace, Record<Lang, string>> = {

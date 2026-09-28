@@ -163,7 +163,6 @@ function LiveInvestigation() {
             <Search size={12} /> {t('chat.liveDeploying')}
           </div>
         )}
-        {session?.status === 'awaiting_user' && null}
       </div>
     </div>
   );
@@ -187,7 +186,7 @@ export function ChatPanel() {
   const awaiting = session?.status === 'awaiting_user';
   const investigating = session && ['planning', 'investigating', 'synthesizing'].includes(session.phase);
   const ready = session?.ready ?? false;
-  const showResearchCTA = ready && !working && !awaiting && session && (session.phase === 'interview' || session.phase === 'done' || session.phase === 'idle');
+  const showResearchCTA = ready && !working && !awaiting && session && (session.phase === 'interview' || session.phase === 'done');
   const empty = messages.filter((m) => m.role !== 'system').length === 0;
 
   useEffect(() => {
