@@ -1,18 +1,20 @@
 'use client';
 
-// workspace.tsx — 右侧工作区：证据墙 / 案情综述 / 问题清单 / 活动日志
-import { Activity, FileSearch, Map, ScrollText } from 'lucide-react';
+// workspace.tsx — 右侧工作区：证据墙 / 案情综述 / 问题清单 / 深研方向 / 活动日志
+import { Activity, Compass, FileSearch, Map, ScrollText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
 import { CanvasTab } from './canvas-tab';
 import { NarrativeTab } from './narrative-tab';
 import { QuestionsTab } from './questions-tab';
+import { DirectionsTab } from './directions-tab';
 import { ActivityTab } from './activity-tab';
 
 const TABS = [
   { key: 'canvas', label: '证据墙', en: 'EVIDENCE WALL', icon: Map },
   { key: 'narrative', label: '案情综述', en: 'CASE BRIEF', icon: ScrollText },
   { key: 'questions', label: '问题清单', en: 'QUESTIONS', icon: FileSearch },
+  { key: 'directions', label: '深研方向', en: 'RESEARCH PATHS', icon: Compass },
   { key: 'activity', label: '活动日志', en: 'ACTIVITY', icon: Activity },
 ] as const;
 
@@ -58,6 +60,7 @@ export function Workspace() {
         </div>
         {tab === 'narrative' && <NarrativeTab />}
         {tab === 'questions' && <QuestionsTab />}
+        {tab === 'directions' && <DirectionsTab />}
         {tab === 'activity' && <ActivityTab />}
       </div>
     </div>

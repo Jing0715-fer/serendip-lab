@@ -3,11 +3,12 @@ import {
   createSession, getSessionRow, mapSessionFull, listSessionSummaries, deleteSession,
   updateSessionFields, listMessages, listNodes, listEdges, listQuestions, getPlan,
   listActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
-  computeStats, touchSession, NODE_KINDS,
+  computeStats, touchSession, getDirections, NODE_KINDS,
 } from './src/db'
 import { broadcast, makeSseResponse } from './src/emitter'
 import { AgentRuntime, stateSnapshot } from './src/runtime'
 import { seedDemoSession } from './src/seed'
+import { generateDirections, directionsRunning } from './src/directions'
 import { sleep, clamp } from './src/util'
 import {
   PROVIDER_CATALOG,
@@ -16,7 +17,7 @@ import {
   maskedSettings,
   type LlmSettings,
 } from './src/llm-config'
-import { testLlmConnection } from './src/llm'
+import { testLlmConnection, listRemoteModels } from './src/llm'
 
 const PORT = 3002
 const VERSION = '1.0.0'
@@ -61,6 +62,7 @@ function sessionFullPayload(id: string) {
     narrative: row.narrative || '',
     questions: listQuestions(id),
     plan: getPlan(id),
+    directions: getDirections(id),
     stats,
     activity: listActivity(id, 120),
   }
@@ -234,6 +236,17 @@ const server = Bun.serve({
       return json(result)
     }
 
+    // --- 远端模型列表发现（Task 12）：填 Key 后自动拉取 /models ---
+    if (path === '/api/agent/llm-config/models' && method === 'POST') {
+      const body = await readBody(request)
+      const result = await listRemoteModels({
+        providerId: typeof body.providerId === 'string' ? body.providerId : undefined,
+        apiKey: typeof body.apiKey === 'string' ? body.apiKey : undefined,
+        baseUrlOverride: typeof body.baseUrlOverride === 'string' ? body.baseUrlOverride : undefined,
+      })
+      return json(result)
+    }
+
     // --- /api/agent/sessions 集合 ---
     if (path === '/api/agent/sessions') {
       if (method === 'GET') {
@@ -274,7 +287,7 @@ const server = Bun.serve({
     }
 
     // --- /api/agent/sessions/:id 子操作 ---
-    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star))?$/)
+    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions))?$/)
     if (subMatch) {
       const id = subMatch[1]
       const action = subMatch[2]
@@ -305,6 +318,22 @@ const server = Bun.serve({
 
       if (action === 'chat' && method === 'POST') return handleChat(id, request)
       if (action === 'research' && method === 'POST') return handleResearch(id, request)
+
+      // 深研方向：异步生成（结果经 SSE directions 事件推送）
+      if (action === 'directions') {
+        if (method === 'POST') {
+          const r = await generateDirections(id)
+          if (!r.ok) {
+            const status = r.error === 'directions_busy' ? 409 : r.error === 'session not found' ? 404 : 400
+            return errJson(r.error ?? 'failed', status)
+          }
+          return json({ ok: true, running: directionsRunning(id) })
+        }
+        if (method === 'GET') {
+          return json({ directions: getDirections(id), running: directionsRunning(id) })
+        }
+        return errJson('method not allowed', 405)
+      }
 
       if (action === 'control' && method === 'POST') {
         const body = await readBody(request)

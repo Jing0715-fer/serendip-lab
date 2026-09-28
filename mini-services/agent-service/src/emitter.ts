@@ -10,6 +10,7 @@ export type SseEvent =
   | { event: 'tool_result'; data: { callId: string; tool: string; ok: boolean; summary: string; durationMs: number; step: number } }
   | { event: 'state'; data: Record<string, unknown> }
   | { event: 'plan'; data: { plan: unknown } }
+  | { event: 'directions'; data: unknown }
   | { event: 'done'; data: { reason: string; summary: string } }
   | { event: 'error'; data: { message: string } }
 

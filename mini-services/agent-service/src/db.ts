@@ -60,6 +60,33 @@ export type ResearchQuestion = {
   evidenceRefs: string[]
 }
 
+// ---------- 深研方向（Task 12：从证据链提炼研究方向 + 研究计划） ----------
+
+export type DirectionPlanStep = { step: string; detail: string; duration?: string }
+export type DirectionLiterature = { ref: string; note?: string }
+
+export type ResearchDirection = {
+  title: string
+  why: string
+  scores: { novelty: number; feasibility: number; impact: number }
+  evidenceRefs: string[]
+  plan: {
+    objective: string
+    keyQuestions: string[]
+    approach: DirectionPlanStep[]
+    methods: string[]
+    expectedOutcome: string
+    risks?: string
+  }
+  literature: DirectionLiterature[]
+}
+
+export type ResearchDirections = {
+  generatedAt: number
+  summary?: string
+  directions: ResearchDirection[]
+}
+
 export type PlanTask = {
   id: string
   goal: string
@@ -212,6 +239,17 @@ try {
   console.error('[db] migrate nodes.detail failed:', e)
 }
 
+// 轻量迁移：老库补 sessions.directions 列（深研方向，Task 12）
+try {
+  const cols = db.query('PRAGMA table_info(sessions)').all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'directions')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN directions TEXT')
+    console.log('[db] migrated: sessions.directions added')
+  }
+} catch (e) {
+  console.error('[db] migrate sessions.directions failed:', e)
+}
+
 // 启动时：未完成的会话标记 interrupted（phase 保留）
 db.exec(
   `UPDATE sessions SET status='interrupted', updated_at=${now()} WHERE status IN ('running','thinking','paused','awaiting_user')`
@@ -221,6 +259,7 @@ db.exec(
 type SessionRow = {
   id: string; title: string; phase: string; status: string
   meta: string; plan: string | null; narrative: string; budget: string
+  directions: string | null
   created_at: number; updated_at: number
 }
 type MessageRow = {
@@ -348,7 +387,7 @@ export function touchSession(id: string) {
   db.run(`UPDATE sessions SET updated_at=? WHERE id=?`, [now(), id])
 }
 
-export function updateSessionFields(id: string, fields: Partial<{ title: string; phase: string; status: string; meta: string; plan: string | null; narrative: string; budget: string }>) {
+export function updateSessionFields(id: string, fields: Partial<{ title: string; phase: string; status: string; meta: string; plan: string | null; narrative: string; budget: string; directions: string | null }>) {
   const keys = Object.keys(fields)
   if (!keys.length) return
   const setSql = keys.map((k) => `${k}=?`).join(',')
@@ -395,6 +434,22 @@ export function getPlan(id: string): Plan | null {
 
 export function savePlan(id: string, plan: Plan | null) {
   updateSessionFields(id, { plan: plan ? JSON.stringify(plan) : null })
+}
+
+// ---------- directions（深研方向，Task 12） ----------
+export function getDirections(id: string): ResearchDirections | null {
+  const r = getSessionRow(id)
+  if (!r || !r.directions) return null
+  try {
+    const parsed = JSON.parse(r.directions) as ResearchDirections
+    return Array.isArray(parsed?.directions) && parsed.directions.length ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+export function saveDirections(id: string, d: ResearchDirections) {
+  updateSessionFields(id, { directions: JSON.stringify(d) })
 }
 
 export function mapSessionFull(r: SessionRow): SessionFull & { narrative: string } {

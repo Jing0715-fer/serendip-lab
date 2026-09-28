@@ -3,7 +3,7 @@
 // studio.tsx — 工作台编排器：布局骨架 + 会话引导 + SSE 订阅 + 移动端底部导航
 import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { MessagesSquare, Network, ScrollText, Search } from 'lucide-react';
+import { Compass, MessagesSquare, Network, ScrollText, Search } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -40,6 +40,7 @@ const MOBILE_TABS = [
   { key: 'chat', label: '对谈', icon: MessagesSquare },
   { key: 'canvas', label: '证据墙', icon: Network },
   { key: 'narrative', label: '综述', icon: ScrollText },
+  { key: 'directions', label: '深研', icon: Compass },
   { key: 'questions', label: '问题', icon: Search },
 ] as const;
 
@@ -102,7 +103,7 @@ export function Studio() {
                 else {
                   setMobileView('workspace');
                   if (t.key !== 'canvas' || workspaceTab !== 'canvas') {
-                    setWorkspaceTab(t.key as 'canvas' | 'narrative' | 'questions' | 'activity');
+                    setWorkspaceTab(t.key as 'canvas' | 'narrative' | 'questions' | 'activity' | 'directions');
                   }
                 }
               }}

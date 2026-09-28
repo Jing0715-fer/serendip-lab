@@ -95,6 +95,41 @@ export type Plan = {
   hypotheses: { title: string; basis: string }[];
 };
 
+/* ---------------- 深研方向（Task 12：从证据链提炼研究方向 + 研究计划） ---------------- */
+
+export type DirectionPlanStep = {
+  step: string;
+  detail: string;
+  duration?: string;
+};
+
+export type DirectionLiterature = {
+  ref: string;
+  note?: string;
+};
+
+export type ResearchDirection = {
+  title: string;
+  why: string;
+  scores: { novelty: number; feasibility: number; impact: number };
+  evidenceRefs: string[];
+  plan: {
+    objective: string;
+    keyQuestions: string[];
+    approach: DirectionPlanStep[];
+    methods: string[];
+    expectedOutcome: string;
+    risks?: string;
+  };
+  literature: DirectionLiterature[];
+};
+
+export type ResearchDirections = {
+  generatedAt: number;
+  summary?: string;
+  directions: ResearchDirection[];
+};
+
 export type Stats = {
   stepsUsed: number;
   maxSteps: number;
@@ -147,6 +182,7 @@ export type SessionState = {
   narrative: string;
   questions: ResearchQuestion[];
   plan: Plan | null;
+  directions: ResearchDirections | null;
   stats: Stats;
   activity: ActivityEvent[];
 };
@@ -200,6 +236,10 @@ export type ProviderProfileInfo = {
   models: ProviderModelInfo[];
   docsUrl: string;
   keyless?: boolean;
+  /** 不支持 GET /models 远端发现（如内置网关） */
+  supportsModelList?: boolean;
+  /** UI 提示（如国内/海外双域名） */
+  note?: string;
 };
 
 export type LlmSettingsView = {
@@ -224,5 +264,16 @@ export type LlmTestResult = {
   model: string;
   provider: string;
   reply?: string;
+  error?: string;
+};
+
+/** 远端模型列表发现结果（POST /llm-config/models） */
+export type LlmModelsResult = {
+  ok: boolean;
+  provider: string;
+  models: ProviderModelInfo[];
+  /** true = 从远端 /models 拉取；false = 内置网关静态目录 */
+  discovered: boolean;
+  count: number;
   error?: string;
 };

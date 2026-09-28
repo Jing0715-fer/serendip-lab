@@ -41,10 +41,88 @@ export function decodeEntities(s: string): string {
     .replace(/&amp;/g, '&')
 }
 
+/** 字符串内未转义控制字符 / 尾随逗号修复（状态机逐字符扫描，Task 12 加固）
+ *  - 字符串内的裸换行/回车/Tab → 转义为 \n \r \t（模型长 JSON 输出常见笔误）
+ *  - 字符串内的其他控制字符 → 直接丢弃
+ *  - 对象/数组内的尾随逗号（`,` 后仅空白即为 `}`/`]`）→ 删除
+ */
+function jsonTextRepair(s: string): string {
+  let out = ''
+  let inStr = false
+  let esc = false
+  let pending = '' // 逗号 + 其后空白缓冲（字符串外）
+  const flush = () => {
+    out += pending
+    pending = ''
+  }
+  for (const ch of s) {
+    if (inStr) {
+      if (esc) {
+        esc = false
+        out += ch
+        continue
+      }
+      if (ch === '\\') {
+        esc = true
+        out += ch
+        continue
+      }
+      if (ch === '"') {
+        inStr = false
+        out += ch
+        continue
+      }
+      if (ch === '\n') {
+        out += '\\n'
+        continue
+      }
+      if (ch === '\r') {
+        out += '\\r'
+        continue
+      }
+      if (ch === '\t') {
+        out += '\\t'
+        continue
+      }
+      if (ch < ' ') continue // 丢弃其他控制字符
+      out += ch
+      continue
+    }
+    // 字符串外
+    if (pending) {
+      // 已缓冲「逗号+空白」，看下一个非空白字符决定去留
+      if (ch === ' ' || ch === '\n' || ch === '\r' || ch === '\t') {
+        pending += ch
+        continue
+      }
+      if (ch === '}' || ch === ']') {
+        pending = '' // 尾随逗号 → 丢弃
+        out += ch
+        continue
+      }
+      flush()
+      // 落到下方正常处理 ch
+    }
+    if (ch === '"') {
+      inStr = true
+      out += ch
+      continue
+    }
+    if (ch === ',') {
+      pending = ','
+      continue
+    }
+    out += ch
+  }
+  flush()
+  return out
+}
+
 /** 从 LLM 输出中容错提取 JSON 对象（多级防御）
  *  1) 剥 ```json 围栏  2) 直接解析  3) 智能引号归一化
- *  4) 平衡括号扫描（取首个完整 JSON 对象，忽略其后缀文本/多个对象）
- *  5) 截断修复（补齐未闭合的字符串/括号，应对 max_tokens 截断）
+ *  4) 字符串内控制字符/尾随逗号修复（状态机）
+ *  5) 平衡括号扫描（取首个完整 JSON 对象，忽略其后缀文本/多个对象）
+ *  6) 截断修复（补齐未闭合的字符串/括号，应对 max_tokens 截断）
  */
 export function extractJson<T = any>(raw: string): T | null {
   if (!raw) return null
@@ -65,15 +143,23 @@ export function extractJson<T = any>(raw: string): T | null {
   } catch {
     /* continue */
   }
-  // 4) 平衡括号扫描：从首个 { 起找第一个完整对象
-  const start = cleaned.indexOf('{')
+  // 4) 字符串内控制字符 / 尾随逗号修复
+  const repaired = jsonTextRepair(cleaned)
+  try {
+    return JSON.parse(repaired) as T
+  } catch {
+    /* continue */
+  }
+  // 5) 平衡括号扫描：从首个 { 起找第一个完整对象
+  const scanSrc = repaired
+  const start = scanSrc.indexOf('{')
   if (start >= 0) {
     let depth = 0
     let inStr = false
     let esc = false
     let end = -1
-    for (let i = start; i < cleaned.length; i++) {
-      const ch = cleaned[i]
+    for (let i = start; i < scanSrc.length; i++) {
+      const ch = scanSrc[i]
       if (inStr) {
         if (esc) {
           esc = false
@@ -101,13 +187,13 @@ export function extractJson<T = any>(raw: string): T | null {
     }
     if (end > start) {
       try {
-        return JSON.parse(cleaned.slice(start, end + 1)) as T
+        return JSON.parse(scanSrc.slice(start, end + 1)) as T
       } catch {
         /* fallthrough to repair */
       }
     }
-    // 5) 截断修复：补齐未闭合的字符串与括号
-    let body = cleaned.slice(start)
+    // 6) 截断修复：补齐未闭合的字符串与括号
+    let body = scanSrc.slice(start)
     let inStr2 = false
     let esc2 = false
     const stack: string[] = []

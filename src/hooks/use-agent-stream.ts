@@ -14,6 +14,7 @@ const EVENT_NAMES = [
   'tool_result',
   'state',
   'plan',
+  'directions',
   'done',
   'error',
 ] as const;

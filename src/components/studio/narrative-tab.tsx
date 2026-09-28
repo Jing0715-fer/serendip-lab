@@ -1,15 +1,20 @@
 'use client';
 
-// narrative-tab.tsx — 案情综述（结案陈词 markdown）+ 调查计划进度
+// narrative-tab.tsx — 案情综述（结案陈词 markdown）+ 调查计划进度 + 深研方向 CTA
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CheckCircle2, Circle, ScrollText } from 'lucide-react';
+import { CheckCircle2, Circle, Compass, ScrollText, Sparkles } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
 
 export function NarrativeTab() {
   const narrative = useStudio((s) => s.narrative);
   const plan = useStudio((s) => s.plan);
+  const directions = useStudio((s) => s.directions);
+  const directionsBusy = useStudio((s) => s.directionsBusy);
+  const setWorkspaceTab = useStudio((s) => s.setWorkspaceTab);
+  const generateDirections = useStudio((s) => s.generateDirections);
 
   return (
     <div className="studio-scroll h-full overflow-y-auto bg-[#f7f4ee] px-4 py-4 dark:bg-[#171411] sm:px-6">
@@ -81,6 +86,31 @@ export function NarrativeTab() {
           </div>
         )}
       </section>
+
+      {/* 深研方向 CTA：有综述但还没有方向时引导 */}
+      {narrative && !directions && (
+        <div className="mx-auto mt-6 mb-4 flex max-w-[720px] flex-col items-start gap-2 rounded-2xl border border-amber-700/25 bg-gradient-to-r from-[#fdf3d7]/90 to-[#faecc8]/60 p-4 shadow-sm sm:flex-row sm:items-center dark:border-amber-600/25 dark:from-amber-950/40 dark:to-amber-900/20">
+          <Compass size={20} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-stone-800 dark:text-stone-100">这些证据通向哪条研究路线？</div>
+            <p className="mt-0.5 text-[11.5px] leading-relaxed text-stone-500 dark:text-stone-400">
+              让 Serendip 从证据链提炼 3-4 个值得深入研究的方向，每个附完整研究计划。
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => {
+              setWorkspaceTab('directions');
+              void generateDirections();
+            }}
+            disabled={directionsBusy}
+            className="shrink-0 gap-1.5 bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-[12.5px] text-amber-50 hover:from-[#8f3c0c]"
+          >
+            <Sparkles size={12} />
+            提炼深研方向
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

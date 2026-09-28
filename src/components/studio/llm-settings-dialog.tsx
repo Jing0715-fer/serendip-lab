@@ -1,9 +1,12 @@
 'use client';
 
-// llm-settings-dialog.tsx — LLM 供应商配置（Task 11）
+// llm-settings-dialog.tsx — LLM 供应商配置（Task 11 → Task 12 升级）
 // 参照 pdb-tracker-web-v5 的供应商目录设计：目录卡片选择 → 模型 → Key →
 // Base URL 覆盖 → 温度 → 分面孔 thinking 开关；支持连接测试。
-import { useCallback, useEffect, useState } from 'react';
+// Task 12：① 填写 API Key 后自动拉取远端模型列表（GET /models，OpenAI 兼容）；
+//          ② 手动「获取模型列表」按钮；③ 跨供应商 Key 状态修复（切换供应商时
+//             不再把旧供应商的已存 Key 当作当前供应商的 Key）。
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Brain,
@@ -12,13 +15,13 @@ import {
   KeyRound,
   Loader2,
   PlugZap,
+  RefreshCw,
   Thermometer,
   XCircle,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
@@ -27,6 +30,7 @@ import {
   AGENT_FACE_LABEL,
   type AgentFace,
   type LlmSettingsView,
+  type ProviderModelInfo,
   type ProviderProfileInfo,
   type LlmTestResult,
 } from '@/lib/types';
@@ -46,6 +50,8 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
   const [modelInput, setModelInput] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [hasKey, setHasKey] = useState(false);
+  /** 打开面板时已保存配置所属的供应商（跨供应商 Key 修复） */
+  const savedProviderId = useRef('builtin');
   const [baseUrlOverride, setBaseUrlOverride] = useState('');
   const [temperature, setTemperature] = useState('');
   const [thinking, setThinking] = useState<Record<AgentFace, boolean>>({
@@ -59,11 +65,21 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<LlmTestResult | null>(null);
 
+  // ---- 远端模型列表发现（Task 12） ----
+  const [remoteModels, setRemoteModels] = useState<ProviderModelInfo[] | null>(null);
+  const [remoteModelsNote, setRemoteModelsNote] = useState<string | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  /** 上一次自动获取的签名（provider|key|url），防抖去重 */
+  const lastAutoSig = useRef('');
+
   // 打开时拉取配置
   useEffect(() => {
     if (!open) return;
     setLoading(true);
     setTestResult(null);
+    setRemoteModels(null);
+    setRemoteModelsNote(null);
+    lastAutoSig.current = '';
     agentApi
       .getLlmConfig()
       .then(({ settings, catalog }) => {
@@ -72,6 +88,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         setModel(settings.model);
         setModelInput('');
         setHasKey(settings.hasKey);
+        savedProviderId.current = settings.providerId;
         setApiKey('');
         setBaseUrlOverride(settings.baseUrlOverride);
         setTemperature(settings.temperature == null ? '' : String(settings.temperature));
@@ -84,10 +101,72 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
   const profile = catalog.find((p) => p.id === providerId);
   const isBuiltin = providerId === 'builtin';
   const effectiveModel = modelInput.trim() || model || profile?.defaultModel || '';
-  const models = profile?.models ?? [];
+  const catalogModels = profile?.models ?? [];
+  const models = remoteModels ?? catalogModels;
+  /** 已存 Key 只对它所属的供应商有效（切换供应商后必须重新填写） */
+  const keyConfigured = hasKey && providerId === savedProviderId.current;
+
+  // ---- 模型列表拉取（自动 + 手动共用） ----
+  const fetchModels = useCallback(
+    async (opts: { manual?: boolean } = {}) => {
+      if (!profile || isBuiltin || profile.supportsModelList === false) return;
+      if (providerId === 'custom' && !baseUrlOverride.trim()) {
+        if (opts.manual) toast.error('自定义端点需要先填写 Base URL');
+        return;
+      }
+      if (!apiKey.trim() && !keyConfigured && !profile.keyless) {
+        if (opts.manual) toast.error('请先填写 API Key');
+        return;
+      }
+      setFetchingModels(true);
+      setRemoteModelsNote(null);
+      try {
+        const r = await agentApi.fetchLlmModels({
+          providerId,
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(baseUrlOverride.trim() ? { baseUrlOverride: baseUrlOverride.trim() } : {}),
+        });
+        if (r.ok && r.models.length > 0) {
+          setRemoteModels(r.models);
+          setRemoteModelsNote(r.discovered ? `已从 ${profile.displayName} 拉取 ${r.count} 个模型` : null);
+          // 当前选中模型不在列表中 → 切到列表第一个
+          const cur = modelInput.trim() || model || profile.defaultModel;
+          if (cur && !r.models.some((m) => m.id === cur)) {
+            setModel(r.models[0].id);
+            setModelInput('');
+            toast.info(`当前模型不在列表中，已切换为 ${r.models[0].id}`);
+          }
+        } else {
+          setRemoteModels(null);
+          setRemoteModelsNote(r.error ?? '未获取到模型列表，使用内置目录');
+          if (opts.manual) toast.error(`获取模型列表失败：${r.error ?? '未知错误'}`);
+        }
+      } catch (e) {
+        setRemoteModels(null);
+        setRemoteModelsNote(e instanceof Error ? e.message : String(e));
+        if (opts.manual) toast.error(`获取模型列表失败：${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        setFetchingModels(false);
+      }
+    },
+    [profile, isBuiltin, providerId, apiKey, keyConfigured, baseUrlOverride, model, modelInput]
+  );
+
+  // 自动获取：填完 Key（停止输入 900ms）或切换到无 Key 供应商时触发
+  useEffect(() => {
+    if (loading || !profile || isBuiltin || profile.supportsModelList === false) return;
+    const keyReady = apiKey.trim().length >= 8 || (profile.keyless && providerId !== 'custom');
+    const urlReady = providerId !== 'custom' || baseUrlOverride.trim().length > 8;
+    if (!keyReady || !urlReady) return;
+    const sig = `${providerId}|${apiKey.trim()}|${baseUrlOverride.trim()}|${keyConfigured ? 'saved' : 'nosaved'}`;
+    if (sig === lastAutoSig.current) return;
+    lastAutoSig.current = sig;
+    const t = setTimeout(() => void fetchModels(), 900);
+    return () => clearTimeout(t);
+  }, [loading, providerId, apiKey, baseUrlOverride, catalog, keyConfigured, fetchModels]);
 
   const save = useCallback(async () => {
-    if (!isBuiltin && !profile?.keyless && !hasKey && !apiKey.trim()) {
+    if (!isBuiltin && !profile?.keyless && !keyConfigured && !apiKey.trim()) {
       toast.error('请填写 API Key，或切回内置网关');
       return;
     }
@@ -105,7 +184,9 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         ...(temperature.trim() === '' ? { temperature: null } : { temperature: Number(temperature) }),
         thinking,
       });
+      savedProviderId.current = providerId;
       setApiKey('');
+      setHasKey(true);
       toast.success('LLM 配置已保存，下次调用即生效');
       onOpenChange(false);
     } catch (e) {
@@ -113,7 +194,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
     } finally {
       setSaving(false);
     }
-  }, [isBuiltin, profile, hasKey, apiKey, providerId, baseUrlOverride, effectiveModel, temperature, thinking, onOpenChange]);
+  }, [isBuiltin, profile, keyConfigured, apiKey, providerId, baseUrlOverride, effectiveModel, temperature, thinking, onOpenChange]);
 
   const runTest = useCallback(async () => {
     setTesting(true);
@@ -128,6 +209,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
         ...(temperature.trim() === '' ? { temperature: null } : { temperature: Number(temperature) }),
         thinking,
       });
+      savedProviderId.current = providerId;
       setHasKey(true);
       setApiKey('');
       const r = await agentApi.testLlmConfig();
@@ -159,6 +241,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
                 <PlugZap size={12} className="text-amber-700" /> 供应商
+                <span className="text-[10.5px] font-normal text-stone-400">（{catalog.length} 家可选）</span>
               </div>
               <div className="grid grid-cols-3 gap-1.5">
                 {catalog.map((p) => (
@@ -170,6 +253,8 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                       setModel(p.defaultModel || '');
                       setModelInput('');
                       setTestResult(null);
+                      setRemoteModels(null);
+                      setRemoteModelsNote(null);
                     }}
                     className={cn(
                       'rounded-xl border px-2 py-2 text-center transition-all',
@@ -178,7 +263,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                         : 'border-stone-300 bg-white/60 hover:border-stone-400 dark:border-stone-700 dark:bg-stone-800/50 dark:hover:border-stone-500'
                     )}
                   >
-                    <div className={cn('text-[12px] font-semibold', providerId === p.id ? 'text-[#8a380c] dark:text-amber-300' : 'text-stone-700 dark:text-stone-200')}>
+                    <div className={cn('text-[12px] font-semibold leading-tight', providerId === p.id ? 'text-[#8a380c] dark:text-amber-300' : 'text-stone-700 dark:text-stone-200')}>
                       {p.displayName}
                     </div>
                     <div className="mt-0.5 truncate text-[10px] text-stone-400">
@@ -197,6 +282,9 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                   获取 API Key <ExternalLink size={10} />
                 </a>
               )}
+              {profile?.note && (
+                <p className="text-[10.5px] leading-relaxed text-amber-700 dark:text-amber-500">{profile.note}</p>
+              )}
             </div>
 
             {/* 模型 */}
@@ -204,35 +292,56 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
               <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
                 模型 {isBuiltin && <span className="text-[10.5px] font-normal text-stone-400">（内置网关由环境固定）</span>}
               </div>
-              {models.length > 0 ? (
-                <div className="flex gap-2">
+              <div className="flex gap-2">
+                {models.length > 0 ? (
                   <Select value={model || profile?.defaultModel || ''} onValueChange={(v) => { setModel(v); setModelInput(''); }}>
-                    <SelectTrigger className="h-9 flex-1 border-stone-300 bg-white/70 text-[13px] dark:border-stone-700 dark:bg-stone-800/70">
+                    <SelectTrigger className="h-9 min-w-0 flex-1 border-stone-300 bg-white/70 text-[13px] dark:border-stone-700 dark:bg-stone-800/70">
                       <SelectValue placeholder="选择模型" />
                     </SelectTrigger>
-                    <SelectContent className="border-stone-300 bg-[#fdfaf1] dark:border-stone-700 dark:bg-stone-900">
+                    <SelectContent className="max-h-72 border-stone-300 bg-[#fdfaf1] dark:border-stone-700 dark:bg-stone-900">
                       {models.map((m) => (
                         <SelectItem key={m.id} value={m.id} className="text-[13px]">
-                          {m.name}
-                          {m.contextWindow ? <span className="ml-1 text-[10px] text-stone-400">{Math.round(m.contextWindow / 1000)}k ctx</span> : null}
+                          <span className="max-w-[300px] truncate">{m.name}</span>
+                          {m.contextWindow ? <span className="ml-1 shrink-0 text-[10px] text-stone-400">{Math.round(m.contextWindow / 1000)}k ctx</span> : null}
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                ) : (
                   <Input
-                    value={modelInput}
+                    value={modelInput || model}
                     onChange={(e) => setModelInput(e.target.value)}
-                    placeholder="或手填模型 ID"
-                    className="h-9 w-[42%] border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70"
+                    placeholder="模型 ID，如 deepseek-chat / gpt-4o"
+                    className="h-9 min-w-0 flex-1 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70"
                   />
-                </div>
-              ) : (
-                <Input
-                  value={modelInput || model}
-                  onChange={(e) => setModelInput(e.target.value)}
-                  placeholder="模型 ID，如 deepseek-chat / gpt-4o"
-                  className="h-9 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70"
-                />
+                )}
+                {!isBuiltin && profile?.supportsModelList !== false && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-9 shrink-0 gap-1 border-stone-300 px-2.5 text-[11.5px] text-stone-700 dark:border-stone-600 dark:text-stone-200"
+                    onClick={() => void fetchModels({ manual: true })}
+                    disabled={fetchingModels}
+                  >
+                    {fetchingModels ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    获取列表
+                  </Button>
+                )}
+              </div>
+              <Input
+                value={models.length > 0 ? modelInput : ''}
+                onChange={(e) => setModelInput(e.target.value)}
+                placeholder={models.length > 0 ? '或手填模型 ID（不在列表中时）' : ''}
+                className={cn(
+                  'h-9 border-stone-300 bg-white/70 text-[12.5px] font-mono dark:border-stone-700 dark:bg-stone-800/70',
+                  models.length === 0 && 'hidden'
+                )}
+              />
+              {remoteModelsNote && (
+                <p className={cn('text-[10.5px] leading-relaxed', remoteModels ? 'text-emerald-700 dark:text-emerald-400' : 'text-stone-400')}>
+                  {remoteModels ? remoteModelsNote : `⚠ ${remoteModelsNote}`}
+                </p>
               )}
             </div>
 
@@ -241,7 +350,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
               <div className="space-y-1.5">
                 <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
                   <KeyRound size={12} className="text-amber-700" /> API Key
-                  {hasKey && <span className="text-[10.5px] font-normal text-emerald-700 dark:text-emerald-400">已配置（填写可覆盖）</span>}
+                  {keyConfigured && <span className="text-[10.5px] font-normal text-emerald-700 dark:text-emerald-400">已配置（填写可覆盖）</span>}
                 </div>
                 <Input
                   type="password"
@@ -252,7 +361,7 @@ export function LlmSettingsDialog({ open, onOpenChange }: { open: boolean; onOpe
                   autoComplete="off"
                 />
                 <p className="text-[10.5px] leading-relaxed text-stone-400">
-                  Key 只保存在本机 agent-service 的 SQLite 中，不经过任何第三方；留空时读取环境变量 {profile?.apiKeyEnv || '—'}。
+                  填写后自动拉取该供应商的模型列表。Key 只保存在本机 agent-service 的 SQLite 中，不经过任何第三方；留空时读取环境变量 {profile?.apiKeyEnv || '—'}。
                 </p>
               </div>
             )}

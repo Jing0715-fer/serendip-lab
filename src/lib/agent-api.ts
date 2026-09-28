@@ -2,6 +2,7 @@
 import type {
   BoardNode,
   LlmConfigResponse,
+  LlmModelsResult,
   LlmSettingsView,
   LlmTestResult,
   ResearchQuestion,
@@ -113,6 +114,18 @@ export const agentApi = {
   }) => api<{ ok: boolean; settings: LlmSettingsView }>('/llm-config', { method: 'PUT', json: patch }),
 
   testLlmConfig: () => api<LlmTestResult>('/llm-config/test', { method: 'POST' }),
+
+  /** 远端模型列表发现：填 Key 后自动拉取 GET {base}/models */
+  fetchLlmModels: (opts: { providerId?: string; apiKey?: string; baseUrlOverride?: string }) =>
+    api<LlmModelsResult>('/llm-config/models', { method: 'POST', json: opts }),
+
+  // ---------- 深研方向（Task 12） ----------
+
+  generateDirections: (id: string) =>
+    api<{ ok: boolean; running: boolean }>(`/sessions/${id}/directions`, { method: 'POST', json: {} }),
+
+  getDirections: (id: string) =>
+    api<{ directions: unknown; running: boolean }>(`/sessions/${id}/directions`),
 };
 
 export function sseUrl(sessionId: string): string {

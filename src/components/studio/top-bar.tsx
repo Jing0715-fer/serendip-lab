@@ -1,7 +1,7 @@
 'use client';
 
 // top-bar.tsx — 顶栏：品牌 / 会话 / Agent 状态与控制 / 简报导出 / 明暗切换
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import {
@@ -71,6 +71,13 @@ export function TopBar() {
   const { theme, setTheme } = useTheme();
   const [creating, setCreating] = useState(false);
   const [llmSettingsOpen, setLlmSettingsOpen] = useState(false);
+  // next-themes：SSR 时 theme 为 undefined，挂载后才能按真实主题渲染图标（防水合不匹配）
+  // useSyncExternalStore 的 server/client 快照差 = 无副作用的「已挂载」探针
+  const themeMounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
 
   const working = isAgentWorking(session?.status);
   const paused = session?.status === 'paused' || session?.status === 'interrupted';
@@ -301,7 +308,7 @@ export function TopBar() {
           <Settings2 size={14} />
         </Button>
 
-        {/* 明暗切换 */}
+        {/* 明暗切换（mounted 守卫防 next-themes SSR 水合不匹配） */}
         <Button
           size="icon"
           variant="outline"
@@ -309,7 +316,7 @@ export function TopBar() {
           onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
           title="切换明暗模式"
         >
-          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          {themeMounted ? (theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />) : <Sun size={14} />}
         </Button>
       </div>
 

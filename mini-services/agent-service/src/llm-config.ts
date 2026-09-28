@@ -10,6 +10,8 @@
 import { db } from './db'
 
 // ---------- 供应商目录 ----------
+// 全部走 OpenAI 兼容 /chat/completions（Anthropic 为 x-api-key 例外）
+// 支持远端模型列表发现（GET {base}/models，Task 12）：目录内置模型仅作离线兜底
 
 export type ProviderModel = { id: string; name: string; contextWindow?: number }
 
@@ -25,9 +27,13 @@ export type ProviderProfile = {
   defaultModel: string
   models: ProviderModel[]
   docsUrl: string
-  /** 无需 API key（本沙箱内置网关） */
+  /** 无需 API key（本沙箱内置网关 / 本地服务） */
   keyless?: boolean
+  /** 是否支持 GET /models 远端模型发现（默认 true） */
+  supportsModelList?: boolean
   extraHeaders?: Record<string, string>
+  /** UI 提示（如国内/海外双域名） */
+  note?: string
 }
 
 export const PROVIDER_CATALOG: ProviderProfile[] = [
@@ -41,6 +47,7 @@ export const PROVIDER_CATALOG: ProviderProfile[] = [
     models: [{ id: 'glm-4-plus', name: 'GLM-4 Plus' }],
     docsUrl: '',
     keyless: true,
+    supportsModelList: false,
   },
   {
     id: 'deepseek',
@@ -54,6 +61,88 @@ export const PROVIDER_CATALOG: ProviderProfile[] = [
       { id: 'deepseek-reasoner', name: 'DeepSeek R1 (Reasoner)', contextWindow: 64000 },
     ],
     docsUrl: 'https://platform.deepseek.com/api_keys',
+  },
+  {
+    id: 'zhipu',
+    displayName: '智谱 GLM',
+    label: 'ZP',
+    baseURL: 'https://open.bigmodel.cn/api/paas/v4',
+    apiKeyEnv: 'ZHIPU_API_KEY',
+    defaultModel: 'glm-4.5',
+    models: [
+      { id: 'glm-4.5', name: 'GLM-4.5', contextWindow: 128000 },
+      { id: 'glm-4.5-air', name: 'GLM-4.5 Air', contextWindow: 128000 },
+      { id: 'glm-4-plus', name: 'GLM-4 Plus' },
+      { id: 'glm-4-flash', name: 'GLM-4 Flash' },
+    ],
+    docsUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+  },
+  {
+    id: 'minimax',
+    displayName: 'MiniMax',
+    label: 'MM',
+    baseURL: 'https://api.minimaxi.com/v1',
+    apiKeyEnv: 'MINIMAX_API_KEY',
+    defaultModel: 'MiniMax-M2',
+    models: [
+      { id: 'MiniMax-M2', name: 'MiniMax M2', contextWindow: 204800 },
+      { id: 'MiniMax-M1', name: 'MiniMax M1', contextWindow: 1000000 },
+      { id: 'MiniMax-Text-01', name: 'MiniMax Text-01', contextWindow: 1000000 },
+    ],
+    docsUrl: 'https://platform.minimaxi.com/dashboard/apikeys',
+    note: '国内域名 https://api.minimax.chat/v1 可在 Base URL 中覆盖',
+  },
+  {
+    id: 'qwen',
+    displayName: '通义千问 Qwen',
+    label: 'QW',
+    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    apiKeyEnv: 'DASHSCOPE_API_KEY',
+    defaultModel: 'qwen-plus',
+    models: [
+      { id: 'qwen3-max', name: 'Qwen3 Max', contextWindow: 262144 },
+      { id: 'qwen-plus', name: 'Qwen Plus' },
+    ],
+    docsUrl: 'https://bailian.console.aliyun.com/',
+  },
+  {
+    id: 'moonshot',
+    displayName: '月之暗面 Kimi',
+    label: 'KI',
+    baseURL: 'https://api.moonshot.cn/v1',
+    apiKeyEnv: 'MOONSHOT_API_KEY',
+    defaultModel: 'kimi-latest',
+    models: [{ id: 'kimi-latest', name: 'Kimi Latest' }],
+    docsUrl: 'https://platform.moonshot.cn/console/api-keys',
+  },
+  {
+    id: 'ark',
+    displayName: '火山方舟（豆包）',
+    label: 'AK',
+    baseURL: 'https://ark.cn-beijing.volces.com/api/v3',
+    apiKeyEnv: 'ARK_API_KEY',
+    defaultModel: 'doubao-seed-1-6-250615',
+    models: [
+      { id: 'doubao-seed-1-6-250615', name: 'Doubao Seed 1.6', contextWindow: 256000 },
+      { id: 'deepseek-v3-250324', name: 'DeepSeek V3' },
+      { id: 'deepseek-r1-250120', name: 'DeepSeek R1' },
+    ],
+    docsUrl: 'https://console.volcengine.com/ark',
+    note: '推理接入点 ID 也可直接填入模型 ID',
+  },
+  {
+    id: 'siliconflow',
+    displayName: 'SiliconFlow 硅基流动',
+    label: 'SF',
+    baseURL: 'https://api.siliconflow.cn/v1',
+    apiKeyEnv: 'SILICONFLOW_API_KEY',
+    defaultModel: 'deepseek-ai/DeepSeek-V3',
+    models: [
+      { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3' },
+      { id: 'deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1' },
+      { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen2.5 72B' },
+    ],
+    docsUrl: 'https://cloud.siliconflow.cn/account/ak',
   },
   {
     id: 'openai',
@@ -86,41 +175,47 @@ export const PROVIDER_CATALOG: ProviderProfile[] = [
     docsUrl: 'https://console.anthropic.com/settings/keys',
   },
   {
-    id: 'qwen',
-    displayName: '通义千问 Qwen',
-    label: 'QW',
-    baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    apiKeyEnv: 'DASHSCOPE_API_KEY',
-    defaultModel: 'qwen-plus',
+    id: 'openrouter',
+    displayName: 'OpenRouter',
+    label: 'OR',
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKeyEnv: 'OPENROUTER_API_KEY',
+    defaultModel: 'deepseek/deepseek-chat',
     models: [
-      { id: 'qwen3-max', name: 'Qwen3 Max', contextWindow: 262144 },
-      { id: 'qwen-plus', name: 'Qwen Plus' },
+      { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3' },
+      { id: 'anthropic/claude-sonnet-4', name: 'Claude Sonnet 4' },
+      { id: 'openai/gpt-4o', name: 'GPT-4o' },
+      { id: 'google/gemini-2.5-pro', name: 'Gemini 2.5 Pro' },
     ],
-    docsUrl: 'https://bailian.console.aliyun.com/',
+    docsUrl: 'https://openrouter.ai/settings/keys',
+    note: '聚合 300+ 模型，填 Key 后自动拉取完整列表',
   },
   {
-    id: 'moonshot',
-    displayName: '月之暗面 Kimi',
-    label: 'KI',
-    baseURL: 'https://api.moonshot.cn/v1',
-    apiKeyEnv: 'MOONSHOT_API_KEY',
-    defaultModel: 'kimi-latest',
-    models: [{ id: 'kimi-latest', name: 'Kimi Latest' }],
-    docsUrl: 'https://platform.moonshot.cn/console/api-keys',
+    id: 'groq',
+    displayName: 'Groq',
+    label: 'GQ',
+    baseURL: 'https://api.groq.com/openai/v1',
+    apiKeyEnv: 'GROQ_API_KEY',
+    defaultModel: 'llama-3.3-70b-versatile',
+    models: [
+      { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B', contextWindow: 128000 },
+      { id: 'qwen/qwen3-32b', name: 'Qwen3 32B' },
+    ],
+    docsUrl: 'https://console.groq.com/keys',
   },
   {
-    id: 'siliconflow',
-    displayName: 'SiliconFlow 硅基流动',
-    label: 'SF',
-    baseURL: 'https://api.siliconflow.cn/v1',
-    apiKeyEnv: 'SILICONFLOW_API_KEY',
-    defaultModel: 'deepseek-ai/DeepSeek-V3',
+    id: 'xai',
+    displayName: 'xAI Grok',
+    label: 'X',
+    baseURL: 'https://api.x.ai/v1',
+    apiKeyEnv: 'XAI_API_KEY',
+    defaultModel: 'grok-4',
     models: [
-      { id: 'deepseek-ai/DeepSeek-V3', name: 'DeepSeek V3' },
-      { id: 'deepseek-ai/DeepSeek-R1', name: 'DeepSeek R1' },
-      { id: 'Qwen/Qwen2.5-72B-Instruct', name: 'Qwen2.5 72B' },
+      { id: 'grok-4', name: 'Grok 4' },
+      { id: 'grok-3', name: 'Grok 3' },
+      { id: 'grok-3-mini', name: 'Grok 3 mini' },
     ],
-    docsUrl: 'https://cloud.siliconflow.cn/account/ak',
+    docsUrl: 'https://console.x.ai/',
   },
   {
     id: 'ollama',

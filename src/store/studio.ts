@@ -1,6 +1,7 @@
 // studio.ts — 工作台全局状态（zustand）
 // 数据真源：agent-service 的全量 state 快照 + SSE 粒度事件
 import { create } from 'zustand';
+import { toast } from 'sonner';
 import { agentApi } from '@/lib/agent-api';
 import type {
   ActivityEvent,
@@ -9,6 +10,7 @@ import type {
   BoardNode,
   ChatMessage,
   Plan,
+  ResearchDirections,
   ResearchQuestion,
   SessionFull,
   SessionPhase,
@@ -27,6 +29,7 @@ export type AgentEvent =
   | { type: 'tool_result'; callId: string; tool: string; ok: boolean; summary: string; durationMs: number; step: number }
   | { type: 'state'; nodes: BoardNode[]; edges: BoardEdge[]; narrative: string; questions: ResearchQuestion[]; plan: Plan | null; stats: Stats; phase: SessionPhase; status: AgentStatus }
   | { type: 'plan'; plan: Plan }
+  | ({ type: 'directions' } & ResearchDirections)
   | { type: 'done'; reason: string; summary: string }
   | { type: 'error'; message: string };
 
@@ -51,6 +54,7 @@ type StudioState = {
   narrative: string;
   questions: ResearchQuestion[];
   plan: Plan | null;
+  directions: ResearchDirections | null;
   stats: Stats | null;
   activity: ActivityEvent[];
 
@@ -65,8 +69,9 @@ type StudioState = {
   inspectorNodeId: string | null;
   researchDialogOpen: boolean;
   addClueOpen: boolean;
+  directionsBusy: boolean;
   mobileView: 'chat' | 'workspace';
-  workspaceTab: 'canvas' | 'narrative' | 'questions' | 'activity';
+  workspaceTab: 'canvas' | 'narrative' | 'questions' | 'activity' | 'directions';
 
   // ---- 动作 ----
   init: () => Promise<void>;
@@ -80,13 +85,14 @@ type StudioState = {
   addNote: (note: { kind: string; title: string; content: string; sourceUrl?: string; tags?: string[] }) => Promise<void>;
   saveLayout: (positions: { id: string; x: number; y: number }[]) => void;
   toggleStar: (nodeId: string, starred: boolean) => Promise<void>;
+  generateDirections: () => Promise<void>;
   applyEvent: (ev: AgentEvent) => void;
   setConnected: (v: boolean) => void;
   openInspector: (nodeId: string | null) => void;
   setResearchDialog: (v: boolean) => void;
   setAddClue: (v: boolean) => void;
   setMobileView: (v: 'chat' | 'workspace') => void;
-  setWorkspaceTab: (v: 'canvas' | 'narrative' | 'questions' | 'activity') => void;
+  setWorkspaceTab: (v: 'canvas' | 'narrative' | 'questions' | 'activity' | 'directions') => void;
 };
 
 let liveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -137,6 +143,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   narrative: '',
   questions: [],
   plan: null,
+  directions: null,
   stats: null,
   activity: [],
 
@@ -150,6 +157,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   inspectorNodeId: null,
   researchDialogOpen: false,
   addClueOpen: false,
+  directionsBusy: false,
   mobileView: 'chat',
   workspaceTab: 'canvas',
 
@@ -186,6 +194,7 @@ export const useStudio = create<StudioState>((set, get) => ({
         narrative: st.narrative,
         questions: st.questions,
         plan: st.plan,
+        directions: st.directions ?? null,
         stats: st.stats,
         activity: st.activity,
         interviewBusy: false,
@@ -308,6 +317,32 @@ export const useStudio = create<StudioState>((set, get) => ({
     }
   },
 
+  // 深研方向：异步生成（POST 立即返回，结果经 SSE directions 事件到达）
+  generateDirections: async () => {
+    const s = get();
+    if (!s.session || s.directionsBusy) return;
+    if (s.nodes.length < 3) {
+      toast.error('证据墙节点太少——先让 Serendip 完成至少一轮调查，再来提炼深研方向');
+      return;
+    }
+    const sid = s.session.id;
+    set({ directionsBusy: true });
+    try {
+      await agentApi.generateDirections(sid);
+    } catch (e) {
+      set({ directionsBusy: false });
+      toast.error(`深研方向生成启动失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    // SSE 掉线兑底：120s 后仍未收到 directions 事件 → 拉全量恢复
+    setTimeout(() => {
+      const cur = useStudio.getState();
+      if (cur.session?.id === sid && cur.directionsBusy) {
+        void cur.loadSession(sid).then(() => useStudio.setState({ directionsBusy: false }));
+      }
+    }, 120000);
+  },
+
   applyEvent: (ev) => {
     const s = get();
     switch (ev.type) {
@@ -413,13 +448,25 @@ export const useStudio = create<StudioState>((set, get) => ({
         set({ plan: ev.plan });
         break;
       }
+      case 'directions': {
+        // SSE 事件的 data 即 ResearchDirections 本体（use-agent-stream 展开为 {type, generatedAt, summary, directions}）
+        set({
+          directions: {
+            generatedAt: ev.generatedAt ?? Date.now(),
+            ...(ev.summary ? { summary: ev.summary } : {}),
+            directions: Array.isArray(ev.directions) ? ev.directions : [],
+          },
+          directionsBusy: false,
+        });
+        break;
+      }
       case 'done': {
         set({ toolRunning: null, interviewBusy: false });
         void get().refreshSessions();
         break;
       }
       case 'error': {
-        set({ toolRunning: null, interviewBusy: false });
+        set({ toolRunning: null, interviewBusy: false, directionsBusy: false });
         break;
       }
     }
