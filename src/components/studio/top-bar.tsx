@@ -5,9 +5,11 @@ import { useState, useSyncExternalStore } from 'react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import {
+  BookMarked,
   ChevronDown,
   Download,
   FilePlus2,
+  FileText,
   FlaskConical,
   Languages,
   Loader2,
@@ -34,7 +36,8 @@ import {
 import { LogoMark } from './logo';
 import { LlmSettingsDialog } from './llm-settings-dialog';
 import { useStudio, isAgentWorking, fmtElapsed } from '@/store/studio';
-import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, PHASE_LABEL, fmt, localeOf, useI18n, useT } from '@/lib/i18n';
+import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, PHASE_LABEL, fmt, localeOf, useI18n, useT, type TKey } from '@/lib/i18n';
+import { buildBibTeX, collectBibEntries, downloadBibTeX } from '@/lib/bibtex';
 import type { AgentStatus } from '@/lib/types';
 
 function statusTone(status: AgentStatus | undefined): string {
@@ -111,6 +114,8 @@ export function TopBar() {
   const nodes = useStudio((s) => s.nodes);
   const narrative = useStudio((s) => s.narrative);
   const questions = useStudio((s) => s.questions);
+  const directions = useStudio((s) => s.directions);
+  const explorations = useStudio((s) => s.explorations);
   const { theme, setTheme } = useTheme();
   const t = useT();
   const lang = useI18n((s) => s.lang);
@@ -131,6 +136,12 @@ export function TopBar() {
 
   const elapsed = stats?.elapsedMs ?? 0;
 
+  const explorationList = Object.values(explorations);
+  const nothingToExport =
+    !narrative.trim() && nodes.length === 0 && !directions && explorationList.length === 0;
+
+  /* Markdown 研究简报（Task 17 增强）：综述 → 问题清单 → 深研方向（含研究计划）
+   * → 课题探索方案与反馈记录（探索闭环全过程）→ 证据墙清单 */
   function exportBrief() {
     if (!session) return;
     const lines: string[] = [];
@@ -161,6 +172,95 @@ export function TopBar() {
       });
       lines.push('');
     }
+
+    // 深研方向（含完整研究计划与深读文献）
+    if (directions && directions.directions.length) {
+      lines.push(t('export.directions'));
+      lines.push('');
+      directions.directions.forEach((d, i) => {
+        lines.push(`### ${i + 1}. ${d.title}`);
+        lines.push('');
+        lines.push(fmt(t('export.dirWhy'), { text: d.why }));
+        lines.push(
+          `   ${fmt(t('export.scores'), { n: d.scores.novelty, f: d.scores.feasibility, i: d.scores.impact })}`
+        );
+        if (d.plan.objective) lines.push(fmt(t('export.dirPlan'), { text: d.plan.objective }));
+        if (d.plan.keyQuestions.length) {
+          lines.push(t('export.dirQuestions'));
+          d.plan.keyQuestions.forEach((q) => lines.push(`- ${q}`));
+        }
+        if (d.plan.approach.length) {
+          lines.push(t('export.dirApproach'));
+          d.plan.approach.forEach((s, j) => {
+            lines.push(`${j + 1}. ${s.step}${s.duration ? `（${s.duration}）` : ''}`);
+            if (s.detail) lines.push(`   - ${s.detail}`);
+          });
+        }
+        if (d.plan.methods.length)
+          lines.push(fmt(t('export.dirMethods'), { text: d.plan.methods.join('；') }));
+        if (d.plan.expectedOutcome)
+          lines.push(fmt(t('export.dirOutcome'), { text: d.plan.expectedOutcome }));
+        if (d.plan.risks) lines.push(fmt(t('export.dirRisks'), { text: d.plan.risks }));
+        if (d.literature.length) {
+          lines.push(t('export.dirLiterature'));
+          d.literature.forEach((l) => lines.push(`- ${l.ref}${l.note ? ` — ${l.note}` : ''}`));
+        }
+        lines.push('');
+      });
+    }
+
+    // 课题探索方案与反馈记录（探索闭环全过程，含每轮 verdict / 推导 / 下一步方向）
+    if (explorationList.length) {
+      lines.push(t('export.explorations'));
+      lines.push('');
+      for (const exp of explorationList) {
+        lines.push(fmt(t('export.expPlan'), { title: exp.topicTitle, n: String(exp.rounds.length + 1) }));
+        lines.push('');
+        if (exp.plan.objective) lines.push(fmt(t('export.expObjective'), { text: exp.plan.objective }));
+        if (exp.plan.hypothesis)
+          lines.push(fmt(t('export.expHypothesis'), { text: exp.plan.hypothesis }));
+        if (exp.plan.keyQuestions.length) {
+          lines.push(t('export.dirQuestions'));
+          exp.plan.keyQuestions.forEach((q) => lines.push(`- ${q}`));
+        }
+        if (exp.plan.design.length) {
+          lines.push(t('export.expDesign'));
+          exp.plan.design.forEach((s, j) => {
+            lines.push(`${j + 1}. ${s.step}${s.duration ? `（${s.duration}）` : ''}`);
+            if (s.detail) lines.push(`   - ${s.detail}`);
+          });
+        }
+        if (exp.plan.methods.length)
+          lines.push(fmt(t('export.dirMethods'), { text: exp.plan.methods.join('；') }));
+        if (exp.plan.metrics.length)
+          lines.push(fmt(t('export.expMetrics'), { text: exp.plan.metrics.join('；') }));
+        if (exp.plan.expectedOutcome)
+          lines.push(fmt(t('export.dirOutcome'), { text: exp.plan.expectedOutcome }));
+        if (exp.plan.risks) lines.push(fmt(t('export.dirRisks'), { text: exp.plan.risks }));
+        lines.push('');
+
+        for (const r of exp.rounds) {
+          lines.push(
+            fmt(t('export.expRound'), { n: String(r.n), verdict: t(`explore.verdict.${r.verdict}` as TKey) })
+          );
+          lines.push('');
+          lines.push(fmt(t('export.expRoundFeedback'), { text: r.feedback }));
+          if (r.analysis) lines.push(fmt(t('export.expRoundAnalysis'), { text: r.analysis }));
+          if (r.logicUpdates.length) {
+            lines.push(t('export.expRoundWall'));
+            r.logicUpdates.forEach((u) => lines.push(`  - ${u}`));
+          }
+          if (r.nextSteps.length) {
+            lines.push(t('export.expRoundNext'));
+            r.nextSteps.forEach((s, j) => lines.push(`  ${j + 1}. ${s}`));
+          }
+          if (r.planPatch)
+            lines.push(`   - ${fmt(t('explore.planUpdated'), { n: String(r.n + 1) })}`);
+          lines.push('');
+        }
+      }
+    }
+
     if (nodes.length) {
       lines.push(t('export.wall'));
       lines.push('');
@@ -177,6 +277,22 @@ export function TopBar() {
     a.click();
     URL.revokeObjectURL(url);
     toast.success(t('export.downloaded'));
+  }
+
+  /* BibTeX 文献库导出（Task 17 新功能）：墙上文献源 → .bib，可导入文献管理器 */
+  function exportBib() {
+    if (!session) return;
+    const entries = collectBibEntries(nodes);
+    if (entries.length === 0) {
+      toast.info(t('export.bibEmpty'));
+      return;
+    }
+    const content = buildBibTeX(entries, {
+      title: `${session.title} · ${t('export.bibItem')}`,
+      date: new Date().toLocaleString(localeOf(lang), { hour12: false }),
+    });
+    downloadBibTeX(content, `Serendip-${session.title.slice(0, 24)}.bib`);
+    toast.success(fmt(t('export.bibDownloaded'), { n: entries.length }));
   }
 
   return (
@@ -333,18 +449,41 @@ export function TopBar() {
           </>
         )}
 
-        {/* 简报导出 */}
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 gap-1 border-stone-300 text-[13px]"
-          onClick={exportBrief}
-          disabled={!session || (!narrative && nodes.length === 0)}
-          title={t('export.title')}
-        >
-          <Download size={14} />
-          <span className="hidden lg:inline">{t('export.brief')}</span>
-        </Button>
+        {/* 导出菜单（Task 17）：Markdown 简报 + BibTeX 文献库；
+            固定 trigger id 防 React 19.2 流式水合的 useId 漂移（同会话菜单） */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild id="export-menu-trigger">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 border-stone-300 text-[13px]"
+              disabled={!session || nothingToExport}
+              title={t('export.title')}
+            >
+              <Download size={14} />
+              <span className="hidden lg:inline">{t('export.menuTitle')}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-72 border-stone-300 bg-[#fdfaf1] dark:border-stone-700 dark:bg-stone-900">
+            <DropdownMenuLabel className="text-xs tracking-wider text-stone-500">
+              {t('export.menuHint')}
+            </DropdownMenuLabel>
+            <DropdownMenuItem onClick={exportBrief} className="gap-2.5 py-2.5">
+              <FileText size={15} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium">{t('export.mdItem')}</span>
+                <span className="block text-[10.5px] leading-snug text-stone-400">{t('export.mdItemDesc')}</span>
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={exportBib} className="gap-2.5 py-2.5">
+              <BookMarked size={15} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium">{t('export.bibItem')}</span>
+                <span className="block text-[10.5px] leading-snug text-stone-400">{t('export.bibItemDesc')}</span>
+              </span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
         {/* 语言切换 */}
         <LangToggle />

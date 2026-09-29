@@ -27,8 +27,9 @@ import { fmt, NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
 import { useStudio } from '@/store/studio';
 import type { BoardNode, NodeKind } from '@/lib/types';
 
-/** 节点 data：把 BoardNode 整体塞进 React Flow 的 data，外加 live 标记 */
-export type BoardNodeData = BoardNode & { live?: boolean };
+/** 节点 data：把 BoardNode 整体塞进 React Flow 的 data，外加 live/dimmed/hit 标记
+ *  dimmed/hit（Task 17）：搜索时未命中卡压暗、命中卡高亮 */
+export type BoardNodeData = BoardNode & { live?: boolean; dimmed?: boolean; hit?: boolean };
 export type EvidenceFlowNode = Node<BoardNodeData>;
 
 /** id → 稳定微旋转（-3° ~ 3°），让每张卡像随手钉上去的 */
@@ -100,7 +101,9 @@ function CardBase({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
           'ev-card',
           `ev-card--${kind}`,
           selected && 'is-selected',
-          live && 'is-live'
+          live && 'is-live',
+          data.dimmed && 'is-dimmed',
+          data.hit && 'is-hit'
         )}
       >
         {/* 图钉：顶部中央，径向渐变圆点 + 微投影 */}
@@ -216,7 +219,14 @@ export function TopicNode({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
     >
       <article
         style={{ '--tilt': `${tilt.toFixed(2)}deg` } as CSSProperties}
-        className={cn('ev-card', 'ev-card--topic', selected && 'is-selected', live && 'is-live')}
+        className={cn(
+          'ev-card',
+          'ev-card--topic',
+          selected && 'is-selected',
+          live && 'is-live',
+          data.dimmed && 'is-dimmed',
+          data.hit && 'is-hit'
+        )}
       >
         {/* 金色大图钉 */}
         <span className={cn('ev-pin', PIN_CLASS.topic)} aria-hidden="true" />

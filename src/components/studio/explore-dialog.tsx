@@ -1,15 +1,18 @@
 'use client';
 
-// explore-dialog.tsx — 课题探索闭环（Task 16）
+// explore-dialog.tsx — 课题探索闭环（Task 16 → Task 17 复制 Markdown）
 // 单张深研课题卡的「探索方案 → 反馈结果 → 继续推导」循环面板：
 //  · 方案：目标 / 待验证假说 / 分阶段实验设计（含决策点）/ 方法 / 判读标准 / 预期产出；
 //  · 反馈：用户带着实验结果回来 → AI 继续推导 → 重整证据墙逻辑 → 修正方案（v2、v3…）；
-//  · 每轮给出 verdict 徽章 + 下一步方向（按优先级）。
+//  · 每轮给出 verdict 徽章 + 下一步方向（按优先级）；
+//  · 复制 Markdown（Task 17）：把方案 + 全部反馈轮次带走贴进实验记录本 / 论文草稿。
 // 数据流：POST 立即返回 → SSE explore 事件更新；反馈应用的证据墙变更经独立 state 事件到达。
 import { useState } from 'react';
+import { toast } from 'sonner';
 import {
   ArrowRight,
   ClipboardList,
+  Copy,
   FlaskConical,
   GitBranch,
   Lightbulb,
@@ -28,7 +31,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
 import { fmt, localeOf, useI18n, useT, type TKey } from '@/lib/i18n';
-import type { ExploreVerdict, FeedbackRound, TopicPlan } from '@/lib/types';
+import type { ExploreVerdict, Exploration, FeedbackRound, TopicPlan } from '@/lib/types';
 
 const VERDICT_STYLE: Record<ExploreVerdict, { chip: string; dot: string; tKey: TKey }> = {
   supports: { chip: 'border-emerald-600/40 bg-emerald-100/80 text-emerald-900 dark:border-emerald-500/40 dark:bg-emerald-950/50 dark:text-emerald-300', dot: 'bg-emerald-500', tKey: 'explore.verdict.supports' },
@@ -245,6 +248,26 @@ function BusyPanel({ kind }: { kind: 'plan' | 'feedback' }) {
   );
 }
 
+/* 剪贴板拷贝（带 execCommand 兑底，防非安全上下文 clipboard API 不可用） */
+async function copyText(text: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+}
+
 export function ExploreDialog() {
   const open = useStudio((s) => s.exploreOpen);
   const setOpen = useStudio((s) => s.setExploreOpen);
@@ -257,6 +280,7 @@ export function ExploreDialog() {
   const submitFeedback = useStudio((s) => s.submitExploreFeedback);
   const [text, setText] = useState('');
   const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   if (!nodeId || !node) return null;
 
@@ -266,6 +290,64 @@ export function ExploreDialog() {
     if (!text.trim() || !nodeId) return;
     await submitFeedback(nodeId, text);
     setText('');
+  }
+
+  /* 复制 Markdown（Task 17）：当前方案 + 全部反馈轮次 → 剪贴板，可贴进实验记录本 */
+  async function copyMarkdown() {
+    if (!exploration) return;
+    const lines: string[] = [];
+    lines.push(
+      fmt(t('export.expPlan'), { title: exploration.topicTitle, n: String(exploration.rounds.length + 1) })
+    );
+    lines.push('');
+    if (exploration.plan.objective)
+      lines.push(fmt(t('export.expObjective'), { text: exploration.plan.objective }));
+    if (exploration.plan.hypothesis)
+      lines.push(fmt(t('export.expHypothesis'), { text: exploration.plan.hypothesis }));
+    if (exploration.plan.keyQuestions.length) {
+      lines.push(t('export.dirQuestions'));
+      exploration.plan.keyQuestions.forEach((q) => lines.push(`- ${q}`));
+    }
+    if (exploration.plan.design.length) {
+      lines.push(t('export.expDesign'));
+      exploration.plan.design.forEach((s, j) => {
+        lines.push(`${j + 1}. ${s.step}${s.duration ? `（${s.duration}）` : ''}`);
+        if (s.detail) lines.push(`   - ${s.detail}`);
+      });
+    }
+    if (exploration.plan.methods.length)
+      lines.push(fmt(t('export.dirMethods'), { text: exploration.plan.methods.join('；') }));
+    if (exploration.plan.metrics.length)
+      lines.push(fmt(t('export.expMetrics'), { text: exploration.plan.metrics.join('；') }));
+    if (exploration.plan.expectedOutcome)
+      lines.push(fmt(t('export.dirOutcome'), { text: exploration.plan.expectedOutcome }));
+    if (exploration.plan.risks)
+      lines.push(fmt(t('export.dirRisks'), { text: exploration.plan.risks }));
+    lines.push('');
+    for (const r of exploration.rounds) {
+      lines.push(
+        fmt(t('export.expRound'), { n: String(r.n), verdict: t(`explore.verdict.${r.verdict}` as TKey) })
+      );
+      lines.push('');
+      lines.push(fmt(t('export.expRoundFeedback'), { text: r.feedback }));
+      if (r.analysis) lines.push(fmt(t('export.expRoundAnalysis'), { text: r.analysis }));
+      if (r.logicUpdates.length) {
+        lines.push(t('export.expRoundWall'));
+        r.logicUpdates.forEach((u) => lines.push(`  - ${u}`));
+      }
+      if (r.nextSteps.length) {
+        lines.push(t('export.expRoundNext'));
+        r.nextSteps.forEach((s, j) => lines.push(`  ${j + 1}. ${s}`));
+      }
+      if (r.planPatch) lines.push(`   - ${fmt(t('explore.planUpdated'), { n: String(r.n + 1) })}`);
+      lines.push('');
+    }
+    try {
+      await copyText(lines.join('\n'));
+      toast.success(fmt(t('explore.copied'), { n: exploration.rounds.length }));
+    } catch (e) {
+      toast.error(fmt(t('explore.copyFailed'), { msg: e instanceof Error ? e.message : String(e) }));
+    }
   }
 
   return (
@@ -322,16 +404,30 @@ export function ExploreDialog() {
             <>
               <div className="relative">
                 <PlanView plan={exploration.plan} version={version} />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void regenerate(nodeId)}
-                  disabled={busy !== null}
-                  className="absolute right-2 top-2 h-6 gap-1 border-amber-700/30 bg-white/70 text-[10.5px] text-stone-600 hover:bg-white dark:border-amber-600/30 dark:bg-stone-800/70 dark:text-stone-300"
-                >
-                  <RefreshCw size={10} />
-                  {t('explore.regenerate')}
-                </Button>
+                <div className="absolute right-2 top-2 flex gap-1.5">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void copyMarkdown()}
+                    disabled={busy !== null}
+                    title={t('explore.copy')}
+                    className="h-6 gap-1 border-stone-300 bg-white/70 text-[10.5px] text-stone-600 hover:bg-white dark:border-stone-600 dark:bg-stone-800/70 dark:text-stone-300"
+                  >
+                    <Copy size={10} />
+                    <span className="hidden sm:inline">{t('explore.copy')}</span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void regenerate(nodeId)}
+                    disabled={busy !== null}
+                    title={t('explore.regenerate')}
+                    className="h-6 gap-1 border-amber-700/30 bg-white/70 text-[10.5px] text-stone-600 hover:bg-white dark:border-amber-600/30 dark:bg-stone-800/70 dark:text-stone-300"
+                  >
+                    <RefreshCw size={10} />
+                    {t('explore.regenerate')}
+                  </Button>
+                </div>
               </div>
 
               {exploration.rounds.length > 0 && (

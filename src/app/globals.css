@@ -532,6 +532,45 @@
   animation: ev-live-pulse 1.25s ease-out 1;
 }
 
+/* ---------- 搜索态（Task 17）：命中卡琥珀光晕，未命中卡压暗去饱和 ----------
+ * 卡不隐藏——保留软木板空间布局，靠明暗对比一眼定位命中卡。 */
+.ev-card.is-dimmed {
+  opacity: 0.22;
+  filter: saturate(0.35);
+}
+.ev-card.is-dimmed:hover {
+  /* 悬停未命中卡仍可微亮提示可点，但不解除压暗 */
+  opacity: 0.4;
+}
+.ev-card.is-hit {
+  box-shadow:
+    0 0 0 2px rgba(217, 119, 6, 0.92),
+    0 0 24px rgba(217, 119, 6, 0.5),
+    0 7px 16px rgba(60, 42, 18, 0.38),
+    inset 0 1px 0 rgba(255, 252, 240, 0.5);
+}
+.ev-card.is-hit:hover {
+  box-shadow:
+    0 0 0 2.5px rgba(217, 119, 6, 1),
+    0 0 30px rgba(217, 119, 6, 0.58),
+    0 12px 26px rgba(60, 42, 18, 0.5),
+    inset 0 1px 0 rgba(255, 252, 240, 0.5);
+}
+.dark .ev-card.is-hit {
+  box-shadow:
+    0 0 0 2px rgba(251, 191, 36, 0.95),
+    0 0 26px rgba(251, 191, 36, 0.4),
+    0 7px 16px rgba(0, 0, 0, 0.55);
+}
+/* 压暗/高亮切换的柔和过渡（叠加在既有 transform/阴影过渡上） */
+.ev-card {
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    opacity 0.28s ease,
+    filter 0.28s ease;
+}
+
 /* ---------- 卡片内容排版（Task 13：标题 3 行 / 正文 4 行 / 解读节选 / 标签） ---------- */
 .ev-card__inner {
   display: flex;

@@ -31,6 +31,8 @@ export type StringEdgeData = {
   label?: string | null;
   /** 两端锚点在卡片边上的分散比例 [source, target]，由布局层预算 */
   ratio?: [number, number];
+  /** 搜索态（Task 17）：两端卡非全命中时退为幽灵绳 */
+  dimmed?: boolean;
 };
 export type EvidenceFlowEdge = Edge<StringEdgeData>;
 
@@ -167,7 +169,9 @@ function StringEdge({
   const label = data?.label ?? null;
 
   // 幽灵绳：整体近乎隐没；正常绳：完全可见；选中绳：加粗
-  const opacity = focused ? 1 : 0.1;
+  // 搜索 dimmed（Task 17）与选中聚焦叠加取最淡，让搜索命中链路一眼可辨
+  const dimmed = data?.dimmed === true;
+  const opacity = dimmed ? 0.08 : focused ? 1 : 0.1;
   const width = selected ? style.width + 0.75 : style.width;
 
   return (
@@ -223,14 +227,14 @@ function StringEdge({
       />
 
       {/* supports 两端的小圆环：像绳环挂在图钉上（吸附在真实绳端） */}
-      {style.ring && focused && (
+      {style.ring && focused && !dimmed && (
         <>
           <circle cx={a.x} cy={a.y} r={3} fill="#f6efdd" stroke={style.color} strokeWidth={1.4} />
           <circle cx={b.x} cy={b.y} r={3} fill="#f6efdd" stroke={style.color} strokeWidth={1.4} />
         </>
       )}
 
-      {label && focused && (
+      {label && focused && !dimmed && (
         <EdgeLabelRenderer>
           <div
             className="ev-edge-tag nodrag nopan"

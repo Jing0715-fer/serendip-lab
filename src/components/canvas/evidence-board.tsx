@@ -34,6 +34,7 @@ import type {
 import { KIND_COLOR, nodeTypes, type BoardNodeData, type EvidenceFlowNode } from './board-nodes';
 import { edgeTypes, STRING_STYLE, type EvidenceFlowEdge } from './string-edge';
 import { layoutBoard } from './board-layout';
+import { nodeMatchesSearch } from './node-search';
 
 export type EvidenceBoardProps = {
   nodes: BoardNode[];
@@ -43,8 +44,15 @@ export type EvidenceBoardProps = {
   onPositionsChange?: (positions: { id: string; x: number; y: number }[]) => void;
   /** 递增触发一次「一键整理」：全部卡片按语义分列重新排布（带动画） */
   organizeSignal?: number;
+  /** 卡片搜索词（Task 17）：非空时未命中卡压暗去饱和、命中卡加琥珀光晕；命中判定与工具条计数共用 */
+  search?: string;
+  /** 隐藏的卡片类型集合（空/未传 = 全部显示）；连线随端点自动隐藏 */
+  hiddenKinds?: ReadonlySet<NodeKind>;
   className?: string;
 };
+
+/** 搜索命中判定真源在 ./node-search（工具条计数与画布高亮共用）；此处 re-export 保持旧引用兼容 */
+export { nodeMatchesSearch } from './node-search';
 
 /* ---------------- 图例（左上角，可折叠） ---------------- */
 
@@ -173,11 +181,26 @@ function EvidenceBoardInner({
   onNodeClick,
   onPositionsChange,
   organizeSignal,
+  search,
+  hiddenKinds,
 }: EvidenceBoardProps) {
   const t = useT();
   // position 为 null 的节点用 dagre 布局兜底
   const layout = useMemo(() => layoutBoard(nodes, edges), [nodes, edges]);
   const liveSet = useMemo(() => new Set(liveIds ?? []), [liveIds]);
+
+  // 搜索（Task 17）：命中卡 is-hit 高亮，未命中 is-dimmed 压暗（不隐藏，保留空间布局）
+  const q = (search ?? '').trim();
+  const matchOf = useCallback((n: BoardNode) => nodeMatchesSearch(n, q), [q]);
+
+  // 类型筛选：被隐藏类型的卡片 hidden；连线端点任一隐藏则连线隐藏
+  const hiddenIdSet = useMemo(() => {
+    const s = new Set<string>();
+    if (hiddenKinds && hiddenKinds.size > 0) {
+      for (const n of nodes) if (hiddenKinds.has(n.kind)) s.add(n.id);
+    }
+    return s;
+  }, [nodes, hiddenKinds]);
 
   const rfNodes = useMemo<EvidenceFlowNode[]>(
     () =>
@@ -185,9 +208,15 @@ function EvidenceBoardInner({
         id: n.id,
         type: n.kind,
         position: n.position ?? layout[n.id] ?? { x: 0, y: 0 },
-        data: { ...n, live: liveSet.has(n.id) },
+        hidden: hiddenIdSet.has(n.id),
+        data: {
+          ...n,
+          live: liveSet.has(n.id),
+          dimmed: q ? !matchOf(n) : false,
+          hit: q ? matchOf(n) : false,
+        },
       })),
-    [nodes, layout, liveSet]
+    [nodes, layout, liveSet, hiddenIdSet, q, matchOf]
   );
 
   const rfEdges = useMemo<EvidenceFlowEdge[]>(() => {
@@ -201,19 +230,30 @@ function EvidenceBoardInner({
     const spread = (i: number, total: number): number =>
       total <= 1 ? 0.5 : 0.28 + (0.44 * (i - 1)) / (total - 1);
 
+    // 搜索时：两端都命中的绳保持醒目，其余绳退为幽灵绳
+    const nodeById = new Map(nodes.map((n) => [n.id, n] as const));
+    const hitOf = (id: string): boolean => {
+      if (!q) return true;
+      const n = nodeById.get(id);
+      return n ? matchOf(n) : false;
+    };
+
     return edges.map((e) => {
       const s = (seen.get(e.source) ?? 0) + 1;
       seen.set(e.source, s);
       const t = (seen.get(e.target) ?? 0) + 1;
       seen.set(e.target, t);
+      const bothHit = hitOf(e.source) && hitOf(e.target);
       return {
         id: e.id,
         source: e.source,
         target: e.target,
         type: 'string',
+        hidden: hiddenIdSet.has(e.source) || hiddenIdSet.has(e.target),
         data: {
           relation: e.relation,
           label: e.label,
+          dimmed: !bothHit,
           ratio: [spread(s, count.get(e.source) ?? 1), spread(t, count.get(e.target) ?? 1)] as [
             number,
             number,
@@ -221,7 +261,7 @@ function EvidenceBoardInner({
         },
       };
     });
-  }, [edges]);
+  }, [edges, nodes, hiddenIdSet, q, matchOf]);
 
   // 受控节点 + 本地拖拽状态：拖动即时生效，结束后上报全部位置
   const [flowNodes, setFlowNodes] = useState<EvidenceFlowNode[]>(rfNodes);
