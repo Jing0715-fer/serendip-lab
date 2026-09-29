@@ -96,7 +96,7 @@ function serializeScratchpad(pad: ScratchEntry[]): string {
 }
 
 /** 按标题解析节点（id 精确 → 规范化标题精确 → 子串包含取最新），link_evidence 与课题卡连线共用 */
-function resolveNodeByTitle(nodes: BoardNode[], q: string): BoardNode | null {
+export function resolveNodeByTitle(nodes: BoardNode[], q: string): BoardNode | null {
   if (!q) return null
   const byId = nodes.find((n) => n.id === q)
   if (byId) return byId

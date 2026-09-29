@@ -2,11 +2,11 @@
 
 // questions-tab.tsx — 问题清单：哪些科学问题值得被进一步研究（新颖性/可行性/影响力打分）
 // Task 14：与证据墙课题栏联动——同样的课题会以金箔课题卡醒目钉在画布最右侧，这里提供引导。
-import { Crown, FileSearch, Link2, MapPin } from 'lucide-react';
+import { Crown, FileSearch, FlaskConical, Link2, MapPin } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
-import { useT } from '@/lib/i18n';
+import { fmt, useT } from '@/lib/i18n';
 import type { ResearchQuestion } from '@/lib/types';
 
 function ScoreBar({ label, value, tone }: { label: string; value: number; tone: string }) {
@@ -29,11 +29,21 @@ function ScoreBar({ label, value, tone }: { label: string; value: number; tone: 
 function QuestionCard({ q, rank }: { q: ResearchQuestion; rank: number }) {
   const nodes = useStudio((s) => s.nodes);
   const openInspector = useStudio((s) => s.openInspector);
+  const openExplore = useStudio((s) => s.openExplore);
+  const explorations = useStudio((s) => s.explorations);
   const t = useT();
 
   const refs = q.evidenceRefs
     .map((ref) => nodes.find((n) => n.title === ref || n.title.includes(ref) || ref.includes(n.title)))
     .filter((n): n is NonNullable<typeof n> => Boolean(n));
+
+  // 对应的金箔课题卡（syncTopicNodes 以 q.text 前 60 字为题）→ 探索闭环入口
+  const topicNode = nodes.find(
+    (n) =>
+      n.kind === 'topic' &&
+      (n.title === q.text.slice(0, 60) || q.text.slice(0, 60).includes(n.title) || n.title.includes(q.text.slice(0, 30)))
+  );
+  const exploration = topicNode ? explorations[topicNode.id] ?? null : null;
 
   return (
     <div
@@ -86,6 +96,27 @@ function QuestionCard({ q, rank }: { q: ResearchQuestion; rank: number }) {
             </button>
           ))}
         </div>
+      )}
+
+      {/* 探索闭环入口：为这个课题生成具体方案 / 继续反馈推导（Task 16） */}
+      {topicNode && (
+        <button
+          onClick={() => openExplore(topicNode.id)}
+          className={cn(
+            'mt-2 flex w-full items-center gap-2 rounded-xl border px-3 py-2 text-left text-[11.5px] font-medium shadow-sm transition-all hover:shadow-md',
+            exploration
+              ? 'border-amber-700/35 bg-gradient-to-b from-[#fdf3d7] to-[#f7e5b5] text-amber-900 dark:border-amber-600/35 dark:from-amber-950/40 dark:to-amber-900/25 dark:text-amber-200'
+              : 'border-stone-300/80 bg-white/70 text-stone-700 hover:border-amber-700/40 hover:text-amber-900 dark:border-stone-600 dark:bg-stone-800/60 dark:text-stone-200 dark:hover:text-amber-300'
+          )}
+        >
+          <FlaskConical size={12} className={exploration ? 'text-[#a3450f] dark:text-amber-400' : 'text-stone-400'} />
+          <span className="flex-1">
+            {exploration && exploration.rounds.length > 0
+              ? `${fmt(t('explore.badge'), { n: String(exploration.rounds.length + 1) })} · ${fmt(t('topic.exploreRounds'), { n: exploration.rounds.length })}`
+              : t('topic.explore')}
+          </span>
+          <span className="text-[10px] text-stone-400 dark:text-amber-400/60">→</span>
+        </button>
       )}
     </div>
   );

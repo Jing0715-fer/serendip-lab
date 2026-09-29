@@ -131,6 +131,47 @@ export type ResearchDirections = {
   directions: ResearchDirection[];
 };
 
+/* ---------------- 课题探索闭环（Task 16：单课题方案 + 反馈推导循环） ---------------- */
+
+export type ExploreStep = {
+  step: string;
+  detail: string;
+  duration?: string;
+};
+
+export type TopicPlan = {
+  objective: string;
+  hypothesis: string;
+  keyQuestions: string[];
+  design: ExploreStep[];
+  methods: string[];
+  metrics: string[];
+  expectedOutcome: string;
+  risks?: string;
+};
+
+export type ExploreVerdict = 'supports' | 'contradicts' | 'mixed' | 'inconclusive' | 'refined';
+
+export type FeedbackRound = {
+  n: number;
+  feedback: string;
+  analysis: string;
+  verdict: ExploreVerdict;
+  logicUpdates: string[];
+  nextSteps: string[];
+  planPatch: Partial<TopicPlan> | null;
+  createdAt: number;
+};
+
+export type Exploration = {
+  nodeId: string;
+  topicTitle: string;
+  generatedAt: number;
+  updatedAt: number;
+  plan: TopicPlan;
+  rounds: FeedbackRound[];
+};
+
 export type Stats = {
   stepsUsed: number;
   maxSteps: number;
@@ -184,6 +225,7 @@ export type SessionState = {
   questions: ResearchQuestion[];
   plan: Plan | null;
   directions: ResearchDirections | null;
+  explorations: Exploration[] | null;
   stats: Stats;
   activity: ActivityEvent[];
 };

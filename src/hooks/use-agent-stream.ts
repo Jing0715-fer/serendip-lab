@@ -17,6 +17,7 @@ const EVENT_NAMES = [
   'state',
   'plan',
   'directions',
+  'explore',
   'done',
   'error',
 ] as const;

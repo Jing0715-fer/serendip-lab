@@ -14,6 +14,7 @@ import { TopBar } from './top-bar';
 import { ChatPanel } from './chat-panel';
 import { Workspace } from './workspace';
 import { ResearchDialog } from './research-dialog';
+import { ExploreDialog } from './explore-dialog';
 
 function BootSkeleton() {
   return (
@@ -138,6 +139,7 @@ export function Studio() {
       </footer>
 
       <ResearchDialog />
+      <ExploreDialog />
       <Toaster position="top-center" richColors />
     </div>
   );

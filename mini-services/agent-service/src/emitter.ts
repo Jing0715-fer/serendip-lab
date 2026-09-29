@@ -11,6 +11,7 @@ export type SseEvent =
   | { event: 'state'; data: Record<string, unknown> }
   | { event: 'plan'; data: { plan: unknown } }
   | { event: 'directions'; data: unknown }
+  | { event: 'explore'; data: { nodeId: string; exploration: unknown } }
   | { event: 'done'; data: { reason: string; summary: string } }
   | { event: 'error'; data: { message: string } }
 

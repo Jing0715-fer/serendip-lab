@@ -88,6 +88,29 @@ export function noticeFor(lang: Lang, key: NoticeKey, params: Record<string, str
       '⭐ 已提炼出 {n} 个值得深入研究的科学课题，醒目钉在证据墙右侧课题栏（含评分与支撑证据连线）——最终判断权在你。',
       '⭐ {n} research-worthy questions distilled and pinned prominently in the wall’s topic column (with scores and supporting-evidence links) — the final call is yours.',
     ],
+    // ---------- 课题探索闭环（Task 16） ----------
+    explorePlanStart: [
+      '实验设计顾问正在为课题《{title}》制定具体探索方案（目标 · 实验设计 · 判读标准 · 决策点）…',
+      'The experiment-design advisor is drafting a concrete exploration plan for “{title}”…',
+    ],
+    explorePlanDone: ['探索方案已生成', 'Exploration plan generated'],
+    explorePlanChat: [
+      '🧪 已为课题《{title}》制定具体探索方案——含目标、分阶段实验设计、判读标准与决策点。点击课题卡上的「探索方案」按钮查看；按方案推进后回来反馈结果，我会继续推导、重整证据墙逻辑并给出下一步方向。',
+      '🧪 A concrete exploration plan is ready for “{title}” — objective, staged design, readout criteria and decision points. Open it via the “Explore” button on the topic card; after you run a step, come back with your results and I’ll keep reasoning, re-organize the wall and propose next steps.',
+    ],
+    explorePlanFailed: ['探索方案生成失败', 'Failed to generate the exploration plan'],
+    feedbackStart: ['科研推理搭档正在分析你的反馈，推导并重整证据墙逻辑…', 'The reasoning partner is analyzing your feedback and re-organizing the wall…'],
+    feedbackDone: ['反馈推导完成（第 {n} 轮）', 'Feedback analysis complete (round {n})'],
+    feedbackChat: [
+      '🔄 第 {n} 轮推导完成（课题《{title}》）——结论：{verdict}。证据墙逻辑已同步重整。{next}\n完整分析与全部下一步方向见课题卡「探索方案」面板。',
+      '🔄 Round {n} reasoning complete (“{title}”) — verdict: {verdict}. The wall has been re-organized accordingly.{next}\nSee the topic card’s “Explore” panel for the full analysis and all next steps.',
+    ],
+    feedbackFailed: ['反馈推导失败', 'Feedback analysis failed'],
+    verdict_supports: ['反馈支持原假说', 'the feedback supports the hypothesis'],
+    verdict_contradicts: ['反馈否定了原假说', 'the feedback contradicts the hypothesis'],
+    verdict_mixed: ['反馈部分支持、部分否定', 'partly supported, partly contradicted'],
+    verdict_inconclusive: ['证据尚不足以判定', 'inconclusive so far'],
+    verdict_refined: ['问题本身被重新定义', 'the question itself got refined'],
   }
   let text = pack[key][lang === 'en' ? 1 : 0]
   for (const [k, v] of Object.entries(params)) {
@@ -114,3 +137,16 @@ export type NoticeKey =
   | 'autoResearchArmedShort'
   | 'autoResearchStart'
   | 'topicsPinned'
+  | 'explorePlanStart'
+  | 'explorePlanDone'
+  | 'explorePlanChat'
+  | 'explorePlanFailed'
+  | 'feedbackStart'
+  | 'feedbackDone'
+  | 'feedbackChat'
+  | 'feedbackFailed'
+  | 'verdict_supports'
+  | 'verdict_contradicts'
+  | 'verdict_mixed'
+  | 'verdict_inconclusive'
+  | 'verdict_refined'

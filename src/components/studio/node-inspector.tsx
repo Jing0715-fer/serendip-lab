@@ -1,7 +1,7 @@
 'use client';
 
 // node-inspector.tsx — 证据卡详情抽屉：详细说明 / 可点击引用 / 置信度 / 关系网络（Task 13 双语）
-import { BookOpenText, ExternalLink, Star, Tag, X } from 'lucide-react';
+import { BookOpenText, ExternalLink, FlaskConical, Star, Tag, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
@@ -25,6 +25,8 @@ export function NodeInspector() {
   const nodes = useStudio((s) => s.nodes);
   const openInspector = useStudio((s) => s.openInspector);
   const toggleStar = useStudio((s) => s.toggleStar);
+  const openExplore = useStudio((s) => s.openExplore);
+  const exploration = useStudio((s) => (node ? s.explorations[node.id] ?? null : null));
   const t = useT();
   const lang = useI18n((s) => s.lang);
 
@@ -76,6 +78,26 @@ export function NodeInspector() {
                 {node.detail}
               </p>
             </div>
+          )}
+
+          {/* 深研课题卡：探索闭环入口（Task 16） */}
+          {node.kind === 'topic' && (
+            <button
+              onClick={() => openExplore(node.id)}
+              className="flex w-full items-center gap-2 rounded-xl border border-[#a3450f]/30 bg-gradient-to-b from-[#fdf3d7] to-[#f7e5b5] px-3 py-2.5 text-left shadow-sm transition-all hover:shadow-md dark:border-amber-600/30 dark:from-amber-950/40 dark:to-amber-900/25"
+            >
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-amber-50">
+                <FlaskConical size={14} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[12.5px] font-semibold text-amber-900 dark:text-amber-200">
+                  {exploration ? fmt(t('explore.badge'), { n: String(exploration.rounds.length + 1) }) : t('topic.explore')}
+                </span>
+                <span className="block truncate text-[11px] leading-relaxed text-amber-800/70 dark:text-amber-300/70">
+                  {t('topic.exploreOpen')}
+                </span>
+              </span>
+            </button>
           )}
 
           {/* 引用（可点击打开原文） */}

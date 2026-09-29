@@ -3,12 +3,13 @@ import {
   createSession, getSessionRow, mapSessionFull, listSessionSummaries, deleteSession,
   updateSessionFields, listMessages, listNodes, listEdges, listQuestions, getPlan,
   listActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
-  computeStats, touchSession, getDirections, NODE_KINDS,
+  computeStats, touchSession, getDirections, listExplorations, NODE_KINDS,
 } from './src/db'
 import { broadcast, makeSseResponse } from './src/emitter'
 import { AgentRuntime, stateSnapshot } from './src/runtime'
 import { seedDemoSession } from './src/seed'
 import { generateDirections, directionsRunning } from './src/directions'
+import { generateExplorePlan, submitExploreFeedback, regenerateExplorePlan, exploreJobOf } from './src/explore'
 import { getSessionLang, setSessionLang, normLang, noticeFor } from './src/lang'
 import { sleep, clamp } from './src/util'
 import {
@@ -64,6 +65,7 @@ function sessionFullPayload(id: string) {
     questions: listQuestions(id),
     plan: getPlan(id),
     directions: getDirections(id),
+    explorations: listExplorations(id),
     stats,
     activity: listActivity(id, 120),
   }
@@ -303,7 +305,7 @@ const server = Bun.serve({
     }
 
     // --- /api/agent/sessions/:id 子操作 ---
-    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions))?$/)
+    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions|explorations))?$/)
     if (subMatch) {
       const id = subMatch[1]
       const action = subMatch[2]
@@ -350,6 +352,31 @@ const server = Bun.serve({
         }
         if (method === 'GET') {
           return json({ directions: getDirections(id), running: directionsRunning(id) })
+        }
+        return errJson('method not allowed', 405)
+      }
+
+      // 课题探索闭环：异步执行（结果经 SSE explore 事件推送；反馈还会广播 state 快照重整证据墙）
+      if (action === 'explorations') {
+        if (method === 'GET') {
+          return json({ explorations: listExplorations(id), running: exploreJobOf(id) })
+        }
+        if (method === 'POST') {
+          const body = await readBody(request)
+          if (body.lang) setSessionLang(id, normLang(body.lang))
+          const nodeId = String(body.nodeId || '')
+          if (!nodeId) return errJson('缺少 nodeId', 400)
+          const act = String(body.action || 'plan')
+          let r: { ok: boolean; error?: string }
+          if (act === 'plan') r = await generateExplorePlan(id, nodeId)
+          else if (act === 'feedback') r = await submitExploreFeedback(id, nodeId, String(body.text || ''))
+          else if (act === 'regenerate') r = await regenerateExplorePlan(id, nodeId)
+          else return errJson('未知 action（合法值: plan/feedback/regenerate）', 400)
+          if (!r.ok) {
+            const status = r.error === 'explore_busy' ? 409 : r.error === 'session not found' ? 404 : 400
+            return errJson(r.error ?? 'failed', status)
+          }
+          return json({ ok: true, running: exploreJobOf(id) })
         }
         return errJson('method not allowed', 405)
       }

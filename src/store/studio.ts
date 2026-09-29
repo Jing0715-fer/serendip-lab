@@ -10,6 +10,7 @@ import type {
   BoardEdge,
   BoardNode,
   ChatMessage,
+  Exploration,
   Plan,
   ResearchDirections,
   ResearchQuestion,
@@ -31,6 +32,7 @@ export type AgentEvent =
   | { type: 'state'; nodes: BoardNode[]; edges: BoardEdge[]; narrative: string; questions: ResearchQuestion[]; plan: Plan | null; stats: Stats; phase: SessionPhase; status: AgentStatus }
   | { type: 'plan'; plan: Plan }
   | ({ type: 'directions' } & ResearchDirections)
+  | { type: 'explore'; nodeId: string; exploration: Exploration }
   | { type: 'done'; reason: string; summary: string }
   | { type: 'error'; message: string };
 
@@ -58,6 +60,12 @@ type StudioState = {
   directions: ResearchDirections | null;
   stats: Stats | null;
   activity: ActivityEvent[];
+
+  // ---- 课题探索闭环（Task 16） ----
+  explorations: Record<string, Exploration>;
+  exploreBusy: Record<string, 'plan' | 'feedback'>;
+  exploreNodeId: string | null;
+  exploreOpen: boolean;
 
   // ---- 瞬态 ----
   connected: boolean;
@@ -87,6 +95,11 @@ type StudioState = {
   saveLayout: (positions: { id: string; x: number; y: number }[]) => void;
   toggleStar: (nodeId: string, starred: boolean) => Promise<void>;
   generateDirections: () => Promise<void>;
+  openExplore: (nodeId: string) => void;
+  setExploreOpen: (v: boolean) => void;
+  generateExplorePlan: (nodeId: string) => Promise<void>;
+  regenerateExplorePlan: (nodeId: string) => Promise<void>;
+  submitExploreFeedback: (nodeId: string, text: string) => Promise<void>;
   applyEvent: (ev: AgentEvent) => void;
   setConnected: (v: boolean) => void;
   openInspector: (nodeId: string | null) => void;
@@ -147,6 +160,10 @@ export const useStudio = create<StudioState>((set, get) => ({
   directions: null,
   stats: null,
   activity: [],
+  explorations: {},
+  exploreBusy: {},
+  exploreNodeId: null,
+  exploreOpen: false,
 
   connected: false,
   bootstrapping: false,
@@ -187,6 +204,10 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ loadingSession: true, inspectorNodeId: null, toolRunning: null, lastThought: null });
     try {
       const st: SessionState = await agentApi.getSession(id);
+      const explorations: Record<string, Exploration> = {};
+      for (const e of st.explorations ?? []) {
+        explorations[e.nodeId] = e;
+      }
       set({
         session: st.session,
         messages: st.messages,
@@ -198,6 +219,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         directions: st.directions ?? null,
         stats: st.stats,
         activity: st.activity,
+        explorations,
+        exploreBusy: {},
         interviewBusy: false,
         liveIds: [],
       });
@@ -367,6 +390,109 @@ export const useStudio = create<StudioState>((set, get) => ({
     }, 120000);
   },
 
+  // ---------- 课题探索闭环（Task 16） ----------
+
+  openExplore: (nodeId) => set({ exploreNodeId: nodeId, exploreOpen: true }),
+  setExploreOpen: (v) => set({ exploreOpen: v }),
+
+  generateExplorePlan: async (nodeId) => {
+    const s = get();
+    if (!s.session || s.exploreBusy[nodeId]) return;
+    if (s.explorations[nodeId]) return; // 已有方案：走 regenerate
+    const sid = s.session.id;
+    set({ exploreBusy: { ...s.exploreBusy, [nodeId]: 'plan' } });
+    try {
+      await agentApi.generateExplorePlan(sid, nodeId, currentLang());
+    } catch (e) {
+      const next = { ...get().exploreBusy };
+      delete next[nodeId];
+      set({ exploreBusy: next });
+      toast.error(
+        currentLang() === 'zh'
+          ? `探索方案生成启动失败：${e instanceof Error ? e.message : String(e)}`
+          : `Failed to start plan generation: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return;
+    }
+    // SSE 掉线兑底：150s 后仍未收到 explore 事件 → 拉全量恢复
+    setTimeout(() => {
+      const cur = useStudio.getState();
+      if (cur.session?.id === sid && cur.exploreBusy[nodeId]) {
+        void cur
+          .loadSession(sid)
+          .then(() => {
+            const b = { ...useStudio.getState().exploreBusy };
+            delete b[nodeId];
+            useStudio.setState({ exploreBusy: b });
+          })
+          .catch(() => {
+            const b = { ...useStudio.getState().exploreBusy };
+            delete b[nodeId];
+            useStudio.setState({ exploreBusy: b });
+          });
+      }
+    }, 150000);
+  },
+
+  regenerateExplorePlan: async (nodeId) => {
+    const s = get();
+    if (!s.session || s.exploreBusy[nodeId]) return;
+    const sid = s.session.id;
+    set({ exploreBusy: { ...s.exploreBusy, [nodeId]: 'plan' } });
+    try {
+      await agentApi.regenerateExplorePlan(sid, nodeId, currentLang());
+    } catch (e) {
+      const next = { ...get().exploreBusy };
+      delete next[nodeId];
+      set({ exploreBusy: next });
+      toast.error(
+        currentLang() === 'zh'
+          ? `重新生成失败：${e instanceof Error ? e.message : String(e)}`
+          : `Failed to regenerate: ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+  },
+
+  submitExploreFeedback: async (nodeId, text) => {
+    const s = get();
+    if (!s.session || s.exploreBusy[nodeId]) return;
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const sid = s.session.id;
+    set({ exploreBusy: { ...s.exploreBusy, [nodeId]: 'feedback' } });
+    try {
+      await agentApi.submitExploreFeedback(sid, nodeId, trimmed, currentLang());
+    } catch (e) {
+      const next = { ...get().exploreBusy };
+      delete next[nodeId];
+      set({ exploreBusy: next });
+      toast.error(
+        currentLang() === 'zh'
+          ? `反馈提交失败：${e instanceof Error ? e.message : String(e)}`
+          : `Failed to submit feedback: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return;
+    }
+    // SSE 掉线兑底：180s 后仍未收到 explore 事件 → 拉全量恢复
+    setTimeout(() => {
+      const cur = useStudio.getState();
+      if (cur.session?.id === sid && cur.exploreBusy[nodeId]) {
+        void cur
+          .loadSession(sid)
+          .then(() => {
+            const b = { ...useStudio.getState().exploreBusy };
+            delete b[nodeId];
+            useStudio.setState({ exploreBusy: b });
+          })
+          .catch(() => {
+            const b = { ...useStudio.getState().exploreBusy };
+            delete b[nodeId];
+            useStudio.setState({ exploreBusy: b });
+          });
+      }
+    }, 180000);
+  },
+
   applyEvent: (ev) => {
     const s = get();
     switch (ev.type) {
@@ -492,13 +618,26 @@ export const useStudio = create<StudioState>((set, get) => ({
         });
         break;
       }
+      case 'explore': {
+        // 课题探索闭环：方案生成 / 反馈推导结果（含重整后的证据墙 state 快照由独立 state 事件到达）
+        const busy = { ...s.exploreBusy };
+        delete busy[ev.nodeId];
+        set({
+          explorations: { ...s.explorations, [ev.nodeId]: ev.exploration },
+          exploreBusy: busy,
+        });
+        break;
+      }
       case 'done': {
         set({ toolRunning: null, interviewBusy: false });
         void get().refreshSessions();
         break;
       }
       case 'error': {
-        set({ toolRunning: null, interviewBusy: false, directionsBusy: false });
+        // 探索任务失败也会广播 error → 同步清 busy，避免按钮永久锁死
+        const busy = { ...s.exploreBusy };
+        for (const k of Object.keys(busy)) delete busy[k];
+        set({ toolRunning: null, interviewBusy: false, directionsBusy: false, exploreBusy: busy });
         if (ev.message) {
           toast.error(ev.message);
         }

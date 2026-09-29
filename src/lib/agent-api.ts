@@ -1,6 +1,7 @@
 // agent-api.ts — agent-service HTTP 客户端（全部走 Caddy 网关，相对路径 + XTransformPort）
 import type {
   BoardNode,
+  Exploration,
   LlmConfigResponse,
   LlmModelsResult,
   LlmSettingsView,
@@ -126,6 +127,26 @@ export const agentApi = {
 
   getDirections: (id: string) =>
     api<{ directions: unknown; running: boolean }>(`/sessions/${id}/directions`),
+
+  // ---------- 课题探索闭环（Task 16：方案生成 → 反馈推导循环） ----------
+
+  generateExplorePlan: (id: string, nodeId: string, lang?: 'zh' | 'en') =>
+    api<{ ok: boolean; running: string | null }>(`/sessions/${id}/explorations`, {
+      method: 'POST',
+      json: { nodeId, action: 'plan', lang },
+    }),
+
+  submitExploreFeedback: (id: string, nodeId: string, text: string, lang?: 'zh' | 'en') =>
+    api<{ ok: boolean; running: string | null }>(`/sessions/${id}/explorations`, {
+      method: 'POST',
+      json: { nodeId, action: 'feedback', text, lang },
+    }),
+
+  regenerateExplorePlan: (id: string, nodeId: string, lang?: 'zh' | 'en') =>
+    api<{ ok: boolean; running: string | null }>(`/sessions/${id}/explorations`, {
+      method: 'POST',
+      json: { nodeId, action: 'regenerate', lang },
+    }),
 };
 
 export function sseUrl(sessionId: string): string {

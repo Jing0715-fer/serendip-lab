@@ -457,6 +457,45 @@
   border-color: rgba(255, 236, 170, 0.6);
 }
 
+/* ---------- 课题卡「探索方案」入口按钮（Task 16）：金底深字小胶囊，hover 抬升 ---------- */
+.ev-topic-explore {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 2px 0;
+  margin-top: 2px;
+}
+.ev-topic-explore-btn {
+  position: relative;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3.5px 9px 3.5px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff7dc;
+  background: linear-gradient(180deg, #b04f08, #8a380c);
+  border: 1px solid rgba(255, 220, 150, 0.55);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(60, 30, 6, 0.45);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.ev-topic-explore-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+  box-shadow: 0 4px 10px rgba(60, 30, 6, 0.55);
+}
+.ev-topic-explore-btn:active {
+  transform: translateY(0);
+}
+.dark .ev-topic-explore-btn {
+  background: linear-gradient(180deg, #f0b429, #d97706);
+  color: #3d2a03;
+  border-color: rgba(255, 236, 170, 0.6);
+}
+
 /* 选中描边（暖赭色，绝不用蓝） */
 .ev-card.is-selected {
   box-shadow:

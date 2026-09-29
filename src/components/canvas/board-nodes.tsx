@@ -13,6 +13,7 @@ import { motion } from 'framer-motion';
 import {
   CircleHelp,
   FileQuestion,
+  FlaskConical,
   Lightbulb,
   Microscope,
   Newspaper,
@@ -22,7 +23,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
+import { fmt, NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
+import { useStudio } from '@/store/studio';
 import type { BoardNode, NodeKind } from '@/lib/types';
 
 /** 节点 data：把 BoardNode 整体塞进 React Flow 的 data，外加 live 标记 */
@@ -190,6 +192,9 @@ export function GapNode(props: NodeProps<EvidenceFlowNode>) {
 export function TopicNode({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
   const lang = useI18n((s) => s.lang);
   const t = useT();
+  const exploration = useStudio((s) => s.explorations[id] ?? null);
+  const exploreBusy = useStudio((s) => s.exploreBusy[id] ?? null);
+  const openExplore = useStudio((s) => s.openExplore);
   const kindLabel = NODE_KIND_LABEL.topic[lang];
   const Icon = KIND_ICON.topic;
   const tilt = tiltOf(id);
@@ -256,6 +261,29 @@ export function TopicNode({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
             {t('topic.recommended')}
           </span>
         )}
+
+        {/* 探索方案入口（Task 16）：生成具体方案 → 反馈结果 → 继续推导闭环 */}
+        <div className="ev-topic-explore">
+          <button
+            type="button"
+            title={t('topic.exploreOpen')}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              openExplore(id);
+            }}
+            className="ev-topic-explore-btn"
+          >
+            {exploreBusy ? (
+              <span className="ev-explore-spin" aria-hidden="true">⏳</span>
+            ) : (
+              <FlaskConical size={10} strokeWidth={2.4} aria-hidden="true" />
+            )}
+            {exploration && exploration.rounds.length > 0
+              ? fmt(t('topic.exploreRounds'), { n: exploration.rounds.length })
+              : t('topic.explore')}
+          </button>
+        </div>
       </article>
     </motion.div>
   );

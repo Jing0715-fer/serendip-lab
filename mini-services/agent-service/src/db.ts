@@ -87,15 +87,41 @@ export type ResearchDirections = {
   directions: ResearchDirection[]
 }
 
-export type PlanTask = {
-  id: string
-  goal: string
-  why: string
-  queries: string[]
-  toolsHint: string[]
-  expectedEvidence: string
-  done: boolean
-  summary?: string
+// ---------- 课题探索闭环（Task 16：单课题探索方案 + 反馈推导循环） ----------
+
+export type ExploreStep = { step: string; detail: string; duration?: string }
+
+export type TopicPlan = {
+  objective: string
+  hypothesis: string
+  keyQuestions: string[]
+  design: ExploreStep[]
+  methods: string[]
+  metrics: string[]
+  expectedOutcome: string
+  risks?: string
+}
+
+export type ExploreVerdict = 'supports' | 'contradicts' | 'mixed' | 'inconclusive' | 'refined'
+
+export type FeedbackRound = {
+  n: number
+  feedback: string
+  analysis: string
+  verdict: ExploreVerdict
+  logicUpdates: string[]
+  nextSteps: string[]
+  planPatch: Partial<TopicPlan> | null
+  createdAt: number
+}
+
+export type Exploration = {
+  nodeId: string
+  topicTitle: string
+  generatedAt: number
+  updatedAt: number
+  plan: TopicPlan
+  rounds: FeedbackRound[]
 }
 
 export type Plan = {
@@ -229,6 +255,12 @@ CREATE INDEX IF NOT EXISTS idx_act_session ON activity(session_id, id);
 CREATE TABLE IF NOT EXISTS settings(
   key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS explorations(
+  node_id TEXT PRIMARY KEY, session_id TEXT NOT NULL,
+  topic_title TEXT NOT NULL, data TEXT NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_explore_session ON explorations(session_id);
 `)
 
 // 轻量迁移：老库补 nodes.detail 列（卡片详细说明，Task 11）
@@ -289,6 +321,10 @@ type ActivityRow = {
   id: number; session_id: string; type: string; tool: string | null
   summary: string; ok: number | null; duration_ms: number | null
   step: number | null; created_at: number
+}
+type ExplorationRow = {
+  node_id: string; session_id: string; topic_title: string
+  data: string; created_at: number; updated_at: number
 }
 
 function mapMessage(r: MessageRow): ChatMessage {
@@ -660,6 +696,62 @@ export function listActivity(sessionId: string, limit = 120): ActivityEvent[] {
     .query('SELECT * FROM activity WHERE session_id=? ORDER BY id DESC LIMIT ?')
     .all(sessionId, limit) as ActivityRow[]
   return rows.reverse().map(mapActivity)
+}
+
+// ---------- explorations（课题探索闭环，Task 16） ----------
+
+function mapExploration(r: ExplorationRow): Exploration {
+  try {
+    const parsed = JSON.parse(r.data) as Omit<Exploration, 'nodeId' | 'topicTitle' | 'updatedAt'>
+    return {
+      nodeId: r.node_id,
+      topicTitle: r.topic_title,
+      generatedAt: parsed.generatedAt ?? r.created_at,
+      updatedAt: r.updated_at,
+      plan: parsed.plan,
+      rounds: Array.isArray(parsed.rounds) ? parsed.rounds : [],
+    }
+  } catch {
+    return {
+      nodeId: r.node_id, topicTitle: r.topic_title, generatedAt: r.created_at, updatedAt: r.updated_at,
+      plan: { objective: '', hypothesis: '', keyQuestions: [], design: [], methods: [], metrics: [], expectedOutcome: '' },
+      rounds: [],
+    }
+  }
+}
+
+export function getExploration(sessionId: string, nodeId: string): Exploration | null {
+  const r = db
+    .query('SELECT * FROM explorations WHERE session_id=? AND node_id=?')
+    .get(sessionId, nodeId) as ExplorationRow | undefined
+  return r ? mapExploration(r) : null
+}
+
+export function listExplorations(sessionId: string): Exploration[] {
+  const rows = db.query('SELECT * FROM explorations WHERE session_id=? ORDER BY updated_at DESC').all(sessionId) as ExplorationRow[]
+  return rows.map(mapExploration)
+}
+
+export function saveExploration(sessionId: string, e: Exploration) {
+  const t = now()
+  const payload = JSON.stringify({ generatedAt: e.generatedAt, plan: e.plan, rounds: e.rounds })
+  const existing = db.query('SELECT node_id FROM explorations WHERE session_id=? AND node_id=?').get(sessionId, e.nodeId)
+  if (existing) {
+    db.run(
+      'UPDATE explorations SET topic_title=?, data=?, updated_at=? WHERE session_id=? AND node_id=?',
+      [e.topicTitle.slice(0, 80), payload, t, sessionId, e.nodeId]
+    )
+  } else {
+    db.run(
+      'INSERT INTO explorations(node_id,session_id,topic_title,data,created_at,updated_at) VALUES(?,?,?,?,?,?)',
+      [e.nodeId, sessionId, e.topicTitle.slice(0, 80), payload, t, t]
+    )
+  }
+  touchSession(sessionId)
+}
+
+export function deleteExploration(sessionId: string, nodeId: string) {
+  db.run('DELETE FROM explorations WHERE session_id=? AND node_id=?', [sessionId, nodeId])
 }
 
 // ---------- stats ----------
