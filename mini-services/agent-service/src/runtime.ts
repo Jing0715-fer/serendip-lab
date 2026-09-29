@@ -5,9 +5,9 @@ import {
   listNodes, listEdges, listMessages, listQuestions,
   insertMessage, insertActivity, updateSessionFields, getSessionRow,
   findNodeByTitle, insertNode, updateNode, updateNodeContent, insertEdge,
-  replaceQuestions, computeStats, NODE_KINDS, EDGE_RELATIONS,
+  replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS,
   type SessionPhase, type AgentStatus, type Plan, type PlanTask,
-  type BoardNode, type ChatMessage,
+  type BoardNode, type ChatMessage, type ResearchQuestion,
 } from './db'
 import { llmJson } from './llm'
 import { INTERVIEWER_PROMPT, PLANNER_PROMPT, SYNTHESIZER_PROMPT, buildInvestigatorPrompt } from './prompts'
@@ -21,6 +21,11 @@ const EXTERNAL_TOOL_NAMES = [
   'clinvar_search', 'web_search', 'web_read',
 ]
 const GRAPH_TOOL_NAMES = ['add_evidence', 'link_evidence', 'update_evidence', 'note_gap', 'ask_user', 'finish_task']
+
+/** 访谈就绪后自动开启自主调研的延迟：留一小窗口给用户继续补充/细化需求 */
+const AUTO_START_DELAY_MS = 6_000
+/** 自动开启自主调研的默认预算（标准调研档） */
+const AUTO_START_BUDGET = { maxSteps: 40, maxMinutes: 15 } as const
 
 /** 默认会话标题（任何一种都允许被 title_suggestion 覆盖） */
 const DEFAULT_SESSION_TITLES = ['新调查', '新课题', 'New Project']
@@ -90,6 +95,20 @@ function serializeScratchpad(pad: ScratchEntry[]): string {
   return lines.join('\n')
 }
 
+/** 按标题解析节点（id 精确 → 规范化标题精确 → 子串包含取最新），link_evidence 与课题卡连线共用 */
+function resolveNodeByTitle(nodes: BoardNode[], q: string): BoardNode | null {
+  if (!q) return null
+  const byId = nodes.find((n) => n.id === q)
+  if (byId) return byId
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+  const t = norm(q)
+  const exact = nodes.find((n) => norm(n.title) === t)
+  if (exact) return exact
+  const contains = nodes.filter((n) => norm(n.title).includes(t) || t.includes(norm(n.title)))
+  if (contains.length) return contains[contains.length - 1]
+  return null
+}
+
 // ---------- AgentRuntime ----------
 export class AgentRuntime {
   readonly sessionId: string
@@ -101,6 +120,8 @@ export class AgentRuntime {
   private consecutiveFails = 0
   private interviewBusy = false
   steeringQueue: string[] = []
+  /** 访谈 ready 后的自动开研究定时器（新用户消息可打断取消） */
+  private autoStartTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(sessionId: string) {
     this.sessionId = sessionId
@@ -229,6 +250,7 @@ export class AgentRuntime {
   stop() {
     this.stopFlag = true
     this.paused = false
+    this.cancelAutoStart()
     if (this.resumeResolve) {
       const r = this.resumeResolve
       this.resumeResolve = null
@@ -351,6 +373,51 @@ export class AgentRuntime {
 
     if (this.stopFlag) return 'stopped'
     return this.budgetOK() ? 'completed' : 'budget'
+  }
+
+  // ---------- 访谈就绪 → 自动开启自主调研（Task 14 新流程） ----------
+
+  /** 取消尚未触发的自动开研究（新用户消息 / stop / dispose 时调用） */
+  private cancelAutoStart() {
+    if (this.autoStartTimer) {
+      clearTimeout(this.autoStartTimer)
+      this.autoStartTimer = null
+    }
+  }
+
+  /**
+   * 访谈信息充足（ready 翻转）后：发系统预告 → 延迟数秒自动 start()。
+   * 延迟窗口内用户再发言会走 interviewTurn 入口的 cancelAutoStart()，继续细化需求；
+   * 触发时再校验会话存在、未在运行、未停止，避免旧定时器误启动。
+   */
+  private scheduleAutoResearch(focusSeed: string | undefined) {
+    this.cancelAutoStart()
+    const lang = getSessionLang(this.sessionId)
+    const notice = insertMessage(this.sessionId, {
+      role: 'system',
+      kind: 'notice',
+      content: noticeFor(lang, 'autoResearchArmed', { sec: Math.round(AUTO_START_DELAY_MS / 1000) }),
+      data: { autoStart: true, delayMs: AUTO_START_DELAY_MS },
+    })
+    this.emitMessage(notice)
+    insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(lang, 'autoResearchArmedShort') })
+
+    this.autoStartTimer = setTimeout(() => {
+      this.autoStartTimer = null
+      const row = getSessionRow(this.sessionId)
+      if (!row || this.running || this.stopFlag) return
+      const meta = getMeta(this.sessionId)
+      const focus = focusSeed || meta.title_suggestion || meta.signals.topic || undefined
+      console.log(`[auto-research] session=${this.sessionId} focus=${focus || '(auto)'}`)
+      const startMsg = insertMessage(this.sessionId, {
+        role: 'system',
+        kind: 'notice',
+        content: noticeFor(getSessionLang(this.sessionId), 'autoResearchStart'),
+        data: { autoStarted: true },
+      })
+      this.emitMessage(startMsg)
+      void this.start(focus, AUTO_START_BUDGET.maxSteps, AUTO_START_BUDGET.maxMinutes)
+    }, AUTO_START_DELAY_MS)
   }
 
   // ---------- 调查内循环（ReAct，每任务最多 8 步） ----------
@@ -545,21 +612,7 @@ export class AgentRuntime {
     if (!EDGE_RELATIONS.includes(relation)) return { error: `非法 relation: ${relation}（合法值: ${EDGE_RELATIONS.join('/')}）` }
 
     const nodes = listNodes(this.sessionId)
-    const resolve = (q: string): BoardNode | null => {
-      if (!q) return null
-      // 1. id 精确
-      const byId = nodes.find((n) => n.id === q)
-      if (byId) return byId
-      // 2. 标题精确（忽略大小写与空白）
-      const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
-      const t = norm(q)
-      const exact = nodes.find((n) => norm(n.title) === t)
-      if (exact) return exact
-      // 3. 子串包含 → 多命中取最新
-      const contains = nodes.filter((n) => norm(n.title).includes(t) || t.includes(norm(n.title)))
-      if (contains.length) return contains[contains.length - 1]
-      return null
-    }
+    const resolve = (q: string): BoardNode | null => resolveNodeByTitle(nodes, q)
 
     const srcNode = resolve(from)
     const dstNode = resolve(to)
@@ -836,9 +889,9 @@ export class AgentRuntime {
 
     // narrative 落库
     if (v.narrative_md) updateSessionFields(this.sessionId, { narrative: String(v.narrative_md) })
-    // questions 替换
+    // questions 替换 + 自动钉「深研课题卡」（Task 14：醒目展示在证据墙课题栏）
     if (Array.isArray(v.questions)) {
-      replaceQuestions(this.sessionId, v.questions.slice(0, 5).map((q: any) => ({
+      const qs = v.questions.slice(0, 5).map((q: any) => ({
         text: String(q.text || ''),
         rationale: String(q.rationale || ''),
         scores: {
@@ -848,7 +901,9 @@ export class AgentRuntime {
         },
         recommended: !!q.recommended,
         evidenceRefs: Array.isArray(q.evidence_refs) ? q.evidence_refs.map(String) : [],
-      })))
+      }))
+      replaceQuestions(this.sessionId, qs)
+      this.syncTopicNodes(qs, final)
     }
     // graph_ops 执行（update_evidence / add_evidence / link_evidence）
     if (Array.isArray(v.graph_ops)) {
@@ -890,15 +945,109 @@ export class AgentRuntime {
     return v
   }
 
+  // ---------- 深研课题卡同步（Task 14：questions → 醒目 topic 节点） ----------
+
+  /**
+   * 把本轮综合提炼的科学问题集同步为证据墙上的 topic 课题卡：
+   * - 陈旧课题（不在本轮问题集）连同其连线一并清理；
+   * - 同题保留原节点 id（仅更新内容/评分/推荐），新题插入；
+   * - 每张课题卡用 derives 边挂到支撑证据（最多 4 条，insertEdge 去重）；
+   * - 推荐深挖的课题置 starred，卡面渲染金箔徽标。
+   */
+  private syncTopicNodes(qs: Omit<ResearchQuestion, 'id'>[], final: boolean) {
+    if (!qs.length) return
+    const lang = getSessionLang(this.sessionId)
+
+    // 1. 清理不在本轮问题集的旧课题卡
+    const removed = deleteStaleTopicNodes(this.sessionId, qs.map((q) => q.text.slice(0, 60)))
+    if (removed > 0) {
+      insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId, `清理 ${removed} 张已被本轮海汰的课题卡`, `Removed ${removed} outdated topic card(s)`) })
+    }
+
+    // 2. upsert 课题卡 + derives 连线
+    for (const q of qs) {
+      const title = q.text.slice(0, 60)
+      const scoresLine = lang === 'en'
+        ? `novelty ${q.scores.novelty}/5 · feasibility ${q.scores.feasibility}/5 · impact ${q.scores.impact}/5`
+        : `新颖 ${q.scores.novelty}/5 · 可行 ${q.scores.feasibility}/5 · 影响 ${q.scores.impact}/5`
+      const tags = lang === 'en'
+        ? [`Nov ${q.scores.novelty}`, `Fea ${q.scores.feasibility}`, `Imp ${q.scores.impact}`]
+        : [`新颖 ${q.scores.novelty}`, `可行 ${q.scores.feasibility}`, `影响 ${q.scores.impact}`]
+      const detail = [
+        `${lang === 'en' ? 'Full question' : '完整问题'}：${q.text}`,
+        `${lang === 'en' ? 'Scores' : '评分'}：${scoresLine}${q.recommended ? (lang === 'en' ? ' · ⭐ recommended' : ' · ⭐ 推荐深挖') : ''}`,
+        '',
+        `${lang === 'en' ? 'Why it matters' : '为何值得研究'}：${q.rationale}`,
+      ].join('\n')
+      const content = q.rationale.slice(0, 400)
+
+      const existing = findNodeByTitle(this.sessionId, title)
+      let nodeId: string
+      if (existing && existing.kind === 'topic') {
+        updateNode(this.sessionId, existing.id, { content, tags, starred: !!q.recommended })
+        updateNodeContent(this.sessionId, existing.id, content, null, null, null, detail)
+        nodeId = existing.id
+      } else {
+        const node = insertNode(this.sessionId, {
+          kind: 'topic',
+          title,
+          content,
+          detail,
+          tags,
+          starred: !!q.recommended,
+          pinnedBy: 'agent',
+        })
+        nodeId = node.id
+        insertActivity(this.sessionId, {
+          type: 'notice',
+          summary: `${L(this.sessionId, '钉上深研课题卡', 'Research topic card pinned')}: ${oneLine(title, 80)}`,
+        })
+      }
+
+      // derives 连线：课题卡 --derives--> 支撑证据（最多 4 条，去重幂等）
+      const nodes = listNodes(this.sessionId)
+      for (const ref of (q.evidenceRefs || []).slice(0, 4)) {
+        const target = resolveNodeByTitle(nodes, String(ref))
+        if (target && target.id !== nodeId && target.kind !== 'topic') {
+          insertEdge(this.sessionId, nodeId, target.id, 'derives', null)
+        }
+      }
+    }
+
+    // 3. 最终综合时在聊天窗提示课题栏位置，引导用户去看醒目课题卡
+    if (final) {
+      const msg = insertMessage(this.sessionId, {
+        role: 'system',
+        kind: 'notice',
+        content: noticeFor(lang, 'topicsPinned', { n: qs.length }),
+      })
+      this.emitMessage(msg)
+    }
+  }
+
   // ---------- 访谈链路（chat） ----------
   get interviewLocked(): boolean {
     return this.interviewBusy
   }
 
+  /** 当前会话 phase（防御式读取，异常时返回 done 阻止自动开研究） */
+  private getSessionPhaseSafe(): string {
+    try {
+      return getSessionRow(this.sessionId)?.phase ?? 'done'
+    } catch {
+      return 'done'
+    }
+  }
+
   async interviewTurn(text: string): Promise<ChatMessage | null> {
     if (this.interviewBusy) return null
     this.interviewBusy = true
+    // 记录入口时是否存在待触发的自动开研究（用户打断补充需求 → 本轮结束后需重新武装）
+    const wasArmed = this.autoStartTimer !== null
     try {
+      // 0. 新用户消息打断未触发的自动开研究：用户还想继续细化需求
+      this.cancelAutoStart()
+
       // 1. 用户消息落库
       const userMsg = insertMessage(this.sessionId, { role: 'user', kind: 'chat', content: text })
       this.emitMessage(userMsg)
@@ -926,6 +1075,7 @@ export class AgentRuntime {
 
       // 4. 更新 meta（signals 累积合并 / ready / title_suggestion）
       const meta = getMeta(this.sessionId)
+      const prevReady = meta.ready
       const sig = { ...meta.signals }
       const ex = v.extracted || {}
       for (const key of ['topic', 'organism', 'scale', 'mechanism_interest', 'method_context'] as const) {
@@ -947,6 +1097,12 @@ export class AgentRuntime {
       const msg = insertMessage(this.sessionId, { role: 'assistant', kind: 'chat', content: reply, data })
       this.emitMessage(msg)
       this.emitState()
+
+      // 6. 新流程：信息充足 → 预告并自动开启自主调研（6s 窗口内可被新消息打断后重新武装；
+      //    仅首次就绪或打断后的补充轮触发，研究完成后的闲聊不会自动开启新一轮）
+      if (ready && !this.running && (wasArmed || (!prevReady && this.getSessionPhaseSafe() !== 'done'))) {
+        this.scheduleAutoResearch(titleSuggestion || sig.topic || undefined)
+      }
       return msg
     } finally {
       this.interviewBusy = false

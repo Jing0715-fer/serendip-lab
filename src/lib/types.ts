@@ -24,7 +24,8 @@ export type NodeKind =
   | 'evidence'
   | 'insight'
   | 'source'
-  | 'gap';
+  | 'gap'
+  | 'topic';
 
 export type EdgeRelation =
   | 'supports'

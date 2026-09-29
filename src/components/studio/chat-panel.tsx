@@ -186,7 +186,11 @@ export function ChatPanel() {
   const awaiting = session?.status === 'awaiting_user';
   const investigating = session && ['planning', 'investigating', 'synthesizing'].includes(session.phase);
   const ready = session?.ready ?? false;
-  const showResearchCTA = ready && !working && !awaiting && session && (session.phase === 'interview' || session.phase === 'done');
+  // 自动开研究倒计时中（最后一条消息是 autoStart 预告）→ 隐藏手动 CTA，避免“让我点”和“马上自动开始”打架
+  const lastMsg = messages[messages.length - 1];
+  const autoStartPending =
+    !!lastMsg && lastMsg.kind === 'notice' && (lastMsg.data as Record<string, unknown> | null)?.autoStart === true;
+  const showResearchCTA = ready && !working && !awaiting && !autoStartPending && session && (session.phase === 'interview' || session.phase === 'done');
   const empty = messages.filter((m) => m.role !== 'system').length === 0;
 
   useEffect(() => {

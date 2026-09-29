@@ -75,6 +75,19 @@ export function noticeFor(lang: Lang, key: NoticeKey, params: Record<string, str
       'Demo project loaded — click “Continue Research” to let the agent build on it, or start your own project',
     ],
     investigatingStart: ['开始自主研究', 'Autonomous research started'],
+    autoResearchArmed: [
+      '✅ 需求已经足够清晰——{sec} 秒后我将自动开始自主信息收集与科学逻辑梳理（继续发言可细化需求，研究中可随时补充素材或暂停）',
+      '✅ Enough context gathered — autonomous research starts in {sec}s (keep typing to refine; you can add notes or pause anytime once it begins)',
+    ],
+    autoResearchArmedShort: ['访谈就绪，即将自动开启自主调研', 'Interview complete — auto-research armed'],
+    autoResearchStart: [
+      '🔍 自主调研开始：我将检索文献与数据库、梳理科学逻辑，把证据钉上证据墙，并最终提炼出值得深入研究的科学课题（右侧课题栏）。',
+      '🔍 Autonomous research started: I will search literature and databases, organize the scientific logic, pin evidence onto the wall, and distill research questions worth pursuing (see the topic column).',
+    ],
+    topicsPinned: [
+      '⭐ 已提炼出 {n} 个值得深入研究的科学课题，醒目钉在证据墙右侧课题栏（含评分与支撑证据连线）——最终判断权在你。',
+      '⭐ {n} research-worthy questions distilled and pinned prominently in the wall’s topic column (with scores and supporting-evidence links) — the final call is yours.',
+    ],
   }
   let text = pack[key][lang === 'en' ? 1 : 0]
   for (const [k, v] of Object.entries(params)) {
@@ -97,3 +110,7 @@ export type NoticeKey =
   | 'userNotePrefix'
   | 'demoLoaded'
   | 'investigatingStart'
+  | 'autoResearchArmed'
+  | 'autoResearchArmedShort'
+  | 'autoResearchStart'
+  | 'topicsPinned'

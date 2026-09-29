@@ -3,7 +3,7 @@
 // 引用均为经 Europe PMC 实测验证的真实 PMID（可点击打开原文）。
 import {
   createSession, insertNode, insertEdge, insertMessage, replaceQuestions,
-  updateSessionFields, defaultBudget, defaultMeta,
+  updateSessionFields, defaultBudget, defaultMeta, listNodes,
 } from './db'
 
 export function seedDemoSession(lang: 'zh' | 'en' = 'zh'): string {
@@ -241,8 +241,8 @@ H1（疏水性约束）证据最厚，但解释不了非膜蛋白基因的留守
 ## 下一步建议
 在跨谱系比较基因组框架下，量化"留守倾向 / 疏水性 / 调控需求"三项的相对贡献；并以 COX1 重编程核表达实验作为决定性判据。`
 
-  // ---- questions（3） ----
-  replaceQuestions(sid, lang === 'en' ? [
+  // ---- questions（3）+ 深研课题卡（Task 14：同步钉为金箔 topic 卡，与 runtime.syncTopicNodes 同构） ----
+  const demoQuestions = lang === 'en' ? [
     {
       text: 'Which ecological or life-history variables predict cross-lineage variation in mitochondrial gene retention rates?',
       rationale: 'Extending static comparison into dynamic evolutionary-rate analysis tests the predictive power of the multi-factor model.',
@@ -286,7 +286,41 @@ H1（疏水性约束）证据最厚，但解释不了非膜蛋白基因的留守
       recommended: false,
       evidenceRefs: ['线粒体核糖体贴内膜分布，专门翻译 COX1/CYTB 等高度疏水核心亚基'],
     },
-  ])
+  ]
+  replaceQuestions(sid, demoQuestions)
+
+  // 深研课题卡：与 runtime.syncTopicNodes 同构的种子版本（按标题反查节点 id 后 derives 连线）
+  const allNodes = listNodes(sid)
+  const resolveByTitle = (refTitle: string): string | null =>
+    allNodes.find((n) => n.title === refTitle)?.id ?? null
+  demoQuestions.forEach((q, i) => {
+    const scoresLine = lang === 'en'
+      ? `novelty ${q.scores.novelty}/5 · feasibility ${q.scores.feasibility}/5 · impact ${q.scores.impact}/5`
+      : `新颖 ${q.scores.novelty}/5 · 可行 ${q.scores.feasibility}/5 · 影响 ${q.scores.impact}/5`
+    const tags = lang === 'en'
+      ? [`Nov ${q.scores.novelty}`, `Fea ${q.scores.feasibility}`, `Imp ${q.scores.impact}`]
+      : [`新颖 ${q.scores.novelty}`, `可行 ${q.scores.feasibility}`, `影响 ${q.scores.impact}`]
+    const detail = [
+      `${lang === 'en' ? 'Full question' : '完整问题'}：${q.text}`,
+      `${lang === 'en' ? 'Scores' : '评分'}：${scoresLine}${q.recommended ? (lang === 'en' ? ' · ⭐ recommended' : ' · ⭐ 推荐深挖') : ''}`,
+      '',
+      `${lang === 'en' ? 'Why it matters' : '为何值得研究'}：${q.rationale}`,
+    ].join('\n')
+    const topicNode = insertNode(sid, {
+      id: nid(`demo-t${i + 1}`),
+      kind: 'topic',
+      title: q.text.slice(0, 60),
+      content: q.rationale.slice(0, 400),
+      detail,
+      tags,
+      starred: !!q.recommended,
+      pinnedBy: 'agent',
+    })
+    for (const ref of (q.evidenceRefs || []).slice(0, 4)) {
+      const targetId = resolveByTitle(String(ref))
+      if (targetId && targetId !== topicNode.id) insertEdge(sid, topicNode.id, targetId, 'derives', null)
+    }
+  })
 
   // ---- 消息 ----
   insertMessage(sid, {

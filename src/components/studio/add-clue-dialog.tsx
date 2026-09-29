@@ -13,7 +13,7 @@ import { useStudio } from '@/store/studio';
 import { NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
 import type { NodeKind } from '@/lib/types';
 
-const KINDS: NodeKind[] = ['evidence', 'insight', 'question', 'hypothesis', 'source', 'gap'];
+const KINDS: NodeKind[] = ['evidence', 'insight', 'question', 'hypothesis', 'source', 'gap', 'topic'];
 
 export function AddClueDialog() {
   const open = useStudio((s) => s.addClueOpen);

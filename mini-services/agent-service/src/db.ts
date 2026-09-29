@@ -14,7 +14,7 @@ export type AgentStatus =
   | 'idle' | 'thinking' | 'running' | 'paused'
   | 'awaiting_user' | 'done' | 'error' | 'interrupted'
 
-export type NodeKind = 'question' | 'hypothesis' | 'evidence' | 'insight' | 'source' | 'gap'
+export type NodeKind = 'question' | 'hypothesis' | 'evidence' | 'insight' | 'source' | 'gap' | 'topic'
 
 export type EdgeRelation = 'supports' | 'contradicts' | 'relates' | 'derives' | 'answers'
 
@@ -169,7 +169,8 @@ export type SessionFull = {
   budget: { maxSteps: number; maxMinutes: number }
 }
 
-export const NODE_KINDS: NodeKind[] = ['question', 'hypothesis', 'evidence', 'insight', 'source', 'gap']
+// topic：综合分析师提炼出的「值得深入研究的科学课题」卡（Task 14 新流程，醒目钉在证据墙课题栏）
+export const NODE_KINDS: NodeKind[] = ['question', 'hypothesis', 'evidence', 'insight', 'source', 'gap', 'topic']
 export const EDGE_RELATIONS: EdgeRelation[] = ['supports', 'contradicts', 'relates', 'derives', 'answers']
 
 // ---------- 数据库初始化 ----------
@@ -589,6 +590,21 @@ export function setNodePositions(sessionId: string, positions: { id: string; x: 
     db.run(`UPDATE nodes SET x=?, y=?, updated_at=${now()} WHERE id=? AND session_id=?`, [p.x, p.y, p.id, sessionId])
   }
   touchSession(sessionId)
+}
+
+/**
+ * 清理陈旧的 topic 课题卡：删除 kind='topic' 且标题不在 keepTitles（规范化后）中的节点及其连线。
+ * 每轮综合 replaceQuestions 后调用，让课题栏始终与最新一轮提炼的科学问题集一致（同题保留原 id，不破坏连线/位置）。
+ */
+export function deleteStaleTopicNodes(sessionId: string, keepTitles: string[]): number {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+  const keep = new Set(keepTitles.map(norm))
+  const stale = listNodes(sessionId).filter((n) => n.kind === 'topic' && !keep.has(norm(n.title)))
+  for (const n of stale) {
+    db.run('DELETE FROM edges WHERE session_id=? AND (source=? OR target=?)', [sessionId, n.id, n.id])
+    db.run('DELETE FROM nodes WHERE id=? AND session_id=?', [n.id, sessionId])
+  }
+  return stale.length
 }
 
 // ---------- edges ----------

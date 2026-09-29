@@ -243,6 +243,14 @@
 .ev-pin--darkred { background: radial-gradient(circle at 38% 32%, #cd564f, #8f1f1a 58%, #57110e); }
 .ev-pin--brass { background: radial-gradient(circle at 38% 32%, #f2d38c, #c99a3a 58%, #8a6a1c); }
 .ev-pin--gray { background: radial-gradient(circle at 38% 32%, #d4cfc6, #8f8b84 58%, #5d5a54); }
+.ev-pin--gold {
+  background: radial-gradient(circle at 38% 32%, #ffefb0, #f0b429 52%, #9a6208);
+  box-shadow:
+    0 2.5px 4px rgba(40, 24, 8, 0.55),
+    0 0 10px rgba(240, 180, 41, 0.55),
+    inset 0 -1.5px 2px rgba(30, 16, 4, 0.4),
+    inset 0 1px 1px rgba(255, 255, 255, 0.6);
+}
 
 /* ---------- 卡片通用：纸质感 + 微旋转 + hover 回正（Task 13：卡面承载更多内容） ---------- */
 .ev-node {
@@ -329,6 +337,124 @@
   box-shadow:
     0 7px 16px rgba(60, 42, 18, 0.3),
     inset 0 1px 0 rgba(255, 252, 240, 0.5);
+}
+
+/* ---------- 深研课题卡（topic，Task 14）：金箔质感 + 琥珀光晕 + 微光泽扫过 ---------- */
+.ev-card--topic {
+  width: 300px;
+  max-height: 244px;
+  padding: 12px 14px 10px;
+  background:
+    repeating-linear-gradient(104deg, rgba(255, 244, 200, 0.12) 0 3px, transparent 3px 9px),
+    linear-gradient(176deg, #fbe7a1 0%, #f6d678 46%, #ecc257 82%, #e3b13d 100%);
+  color: #4a3105;
+  border: 1.5px solid #b07714;
+  border-radius: 3px;
+  box-shadow:
+    0 10px 26px rgba(96, 58, 10, 0.5),
+    0 0 0 1px rgba(255, 232, 158, 0.7),
+    0 0 22px rgba(217, 119, 6, 0.38),
+    inset 0 1px 0 rgba(255, 252, 235, 0.8),
+    inset 0 -3px 0 rgba(146, 96, 20, 0.35);
+}
+.ev-card--topic:hover {
+  transform: rotate(0deg) scale(1.03);
+  box-shadow:
+    0 14px 34px rgba(96, 58, 10, 0.55),
+    0 0 0 1px rgba(255, 236, 170, 0.85),
+    0 0 30px rgba(217, 119, 6, 0.5),
+    inset 0 1px 0 rgba(255, 252, 235, 0.85),
+    inset 0 -3px 0 rgba(146, 96, 20, 0.35);
+}
+/* 微光泽周期性扫过（低透明度，不喧宾夺主） */
+@keyframes ev-topic-sheen {
+  0%, 72% { background-position: -80% 0; }
+  100% { background-position: 180% 0; }
+}
+.ev-card--topic::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: linear-gradient(105deg, transparent 38%, rgba(255, 255, 255, 0.34) 50%, transparent 62%);
+  background-size: 220% 100%;
+  background-position: -80% 0;
+  animation: ev-topic-sheen 7s ease-in-out infinite;
+}
+.ev-card--topic .ev-card__detail {
+  border-left-color: rgba(146, 96, 20, 0.55);
+}
+.ev-topic-title {
+  font-size: 14.5px;
+  line-height: 1.3;
+}
+.ev-topic-body {
+  font-size: 12px;
+  opacity: 0.9;
+}
+.ev-kind-chip--topic {
+  border-color: rgba(146, 96, 20, 0.55);
+  background: linear-gradient(180deg, #8a5a0c, #6f460a);
+  color: #ffedb3;
+  opacity: 1;
+  font-weight: 600;
+}
+.ev-tag--topic {
+  border-color: rgba(146, 96, 20, 0.5);
+  background: linear-gradient(180deg, #fff6d8, #f7e2a8);
+  font-weight: 600;
+  opacity: 1;
+}
+/* 推荐深挖徽标：右上斜挎金色缎带 */
+.ev-topic-ribbon {
+  position: absolute;
+  top: 7px;
+  right: -3px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2.5px 7px 3px 8px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #fff7dc;
+  background: linear-gradient(180deg, #c05608, #8a380c);
+  border: 1px solid rgba(255, 220, 150, 0.5);
+  border-radius: 2px 0 0 2px;
+  box-shadow: 0 2px 6px rgba(60, 30, 6, 0.5);
+  transform: rotate(3deg);
+}
+/* 暗色模式：课题卡沉金色调，避免刺眼 */
+.dark .ev-card--topic {
+  background:
+    repeating-linear-gradient(104deg, rgba(255, 220, 130, 0.07) 0 3px, transparent 3px 9px),
+    linear-gradient(176deg, #8a6410 0%, #7a5608 46%, #6a4a06 82%, #5e3f04 100%);
+  color: #ffe9b0;
+  border-color: #d9a421;
+  box-shadow:
+    0 10px 26px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(217, 164, 33, 0.35),
+    0 0 26px rgba(240, 180, 41, 0.3),
+    inset 0 1px 0 rgba(255, 236, 170, 0.25);
+}
+.dark .ev-card--topic .ev-card__detail {
+  border-left-color: rgba(240, 180, 41, 0.5);
+}
+.dark .ev-tag--topic {
+  background: rgba(240, 180, 41, 0.16);
+  border-color: rgba(240, 180, 41, 0.5);
+  color: #f7dd9d;
+}
+.dark .ev-kind-chip--topic {
+  background: linear-gradient(180deg, #f0b429, #c98a12);
+  color: #3d2a03;
+}
+.dark .ev-topic-ribbon {
+  background: linear-gradient(180deg, #f0b429, #d97706);
+  color: #3d2a03;
+  border-color: rgba(255, 236, 170, 0.6);
 }
 
 /* 选中描边（暖赭色，绝不用蓝） */

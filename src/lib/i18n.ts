@@ -156,6 +156,10 @@ const DICT = {
     'At each checkpoint Serendip evaluates the evidence and surfaces scientific questions worth pursuing — scored by novelty, feasibility and impact, with the most promising one highlighted.',
   ],
   'question.header': ['SERENDIP 的推荐 · 供参考，最终判断权在你', 'SERENDIP suggestions · for reference — the final call is yours'],
+  'question.canvasHint': [
+    '这些课题已同步钉在证据墙右侧课题栏（金箔课题卡，含支撑证据连线）→ 点击前往',
+    'These topics are also pinned in the wall’s rightmost topic column (gold cards with evidence links) → open the wall',
+  ],
 
   /* 深研方向标签页 */
   'dir.novelty': ['新颖', 'Novelty'],
@@ -211,14 +215,14 @@ const DICT = {
   'canvas.addNote': ['添加素材', 'Add card'],
   'canvas.emptyTitle': ['证据墙还是空的', 'The wall is empty'],
   'canvas.emptyBody': [
-    '先在对谈室和 Serendip 聊聊你的好奇心；进入自主研究后，Agent 检索到的文献证据、假说与洞见会被一张张钉到这里，并用红绳串起它们的关系。',
-    'Chat with Serendip about your curiosity first; once autonomous research starts, the evidence, hypotheses and insights it finds will be pinned here one by one, strung together by red threads.',
+    '先在对谈室和 Serendip 聊聊你的好奇心；需求清晰后它会自动开始自主调研——检索到的文献证据、假说与洞见会被一张张钉到这里，最终提炼出的「深研课题卡」会醒目地钉在最右侧课题栏。',
+    'Chat with Serendip about your curiosity first; once the need is clear it starts researching on its own — evidence, hypotheses and insights get pinned here one by one, and the distilled “research topic” cards land prominently in the rightmost column.',
   ],
   'canvas.legend': ['图例', 'Legend'],
   'canvas.organize': ['一键整理', 'Tidy up'],
   'canvas.organizeHint': [
-    '按「课题 → 假说 → 证据 → 来源」语义分列重新排布全部卡片',
-    'Re-arrange all cards into semantic columns: question → hypothesis → evidence → source',
+    '按「课题 → 假说 → 证据 → 来源 → 深研课题」语义分列重新排布全部卡片',
+    'Re-arrange all cards into semantic columns: question → hypothesis → evidence → source → topic',
   ],
   'canvas.organized': ['画布已重新整理', 'Canvas re-organized'],
   'canvas.stamp': ['灵感引擎 · 证据档案', 'EVIDENCE ARCHIVE'],
@@ -341,6 +345,10 @@ const DICT = {
   /* 卡片（画布节点内） */
   'card.conf': ['置信', 'conf'],
   'card.gapFlag': ['待查', 'To probe'],
+
+  /* 深研课题卡（topic 节点） */
+  'topic.recommended': ['推荐深挖', 'Recommended'],
+  'topic.columnHint': ['课题栏 · 值得深挖的方向', 'Topic column · worth pursuing'],
 } as const;
 
 export type TKey = keyof typeof DICT;
@@ -367,6 +375,7 @@ export const NODE_KIND_LABEL: Record<NodeKind, Record<Lang, string>> = {
   insight: { zh: '洞见', en: 'Insight' },
   source: { zh: '文献源', en: 'Source' },
   gap: { zh: '待查', en: 'To probe' },
+  topic: { zh: '深研课题', en: 'Research Topic' },
 };
 
 export const EDGE_RELATION_LABEL: Record<EdgeRelation, Record<Lang, string>> = {

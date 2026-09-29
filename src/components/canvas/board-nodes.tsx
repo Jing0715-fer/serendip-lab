@@ -1,9 +1,11 @@
 'use client';
 
-// 证据墙六种卡片节点 + nodeTypes 映射（Task 2-b → Task 13 卡片详情增强 + 双语）
+// 证据墙七种卡片节点 + nodeTypes 映射（Task 2-b → Task 13 卡片详情增强 + 双语 → Task 14 深研课题卡）
 // 视觉契约：docs/ARCHITECTURE.md §10.3 —— 纸质卡片 + 图钉 + 按 id 哈希微旋转 + live 钉上动画
 // Task 13：卡面承载更多内容——类型小签 / 标题 3 行 / 正文 4 行 / 深度解读节选 /
 // 标签 chips / 置信度迷你条 / 来源 chip，仍保持拍立得质感。
+// Task 14：topic「深研课题卡」——综合分析师提炼的科学问题，金箔质感 + 光晕 + 评分 chips +
+// 推荐徽标，钉在证据墙最右侧课题栏，是整个引擎的最终产出，视觉权重最高。
 
 import type { CSSProperties } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
@@ -16,10 +18,11 @@ import {
   Newspaper,
   Sparkles,
   Star,
+  Telescope,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { NODE_KIND_LABEL, useI18n } from '@/lib/i18n';
+import { NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
 import type { BoardNode, NodeKind } from '@/lib/types';
 
 /** 节点 data：把 BoardNode 整体塞进 React Flow 的 data，外加 live 标记 */
@@ -40,6 +43,7 @@ const KIND_ICON: Record<NodeKind, LucideIcon> = {
   insight: Sparkles,
   source: Newspaper,
   gap: FileQuestion,
+  topic: Telescope,
 };
 
 const PIN_CLASS: Record<NodeKind, string> = {
@@ -49,9 +53,10 @@ const PIN_CLASS: Record<NodeKind, string> = {
   insight: 'ev-pin--brass',
   source: 'ev-pin--gray',
   gap: 'ev-pin--brass',
+  topic: 'ev-pin--gold',
 };
 
-/** 六种卡片的主题色（MiniMap 与图例共用） */
+/** 七种卡片的主题色（MiniMap 与图例共用）；topic 用重琥珀，在软木板上最醒目 */
 export const KIND_COLOR: Record<NodeKind, string> = {
   question: '#f5d98a',
   hypothesis: '#bfe3d0',
@@ -59,6 +64,7 @@ export const KIND_COLOR: Record<NodeKind, string> = {
   insight: '#f6c9a0',
   source: '#eceae4',
   gap: '#fffdf6',
+  topic: '#d97706',
 };
 
 function CardBase({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
@@ -178,6 +184,83 @@ export function GapNode(props: NodeProps<EvidenceFlowNode>) {
   return <CardBase {...props} />;
 }
 
+/* 深研课题卡（Task 14）：引擎的最终产出，视觉权重最高。
+ * 金箔质感 + 琥珀光晕 + 望远镜图钉 + 评分 chips（tags 承载）+ 推荐徽标（starred），
+ * 卡面更宽更醒目；tags 由后端写入（新颖/可行/影响评分）。 */
+export function TopicNode({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
+  const lang = useI18n((s) => s.lang);
+  const t = useT();
+  const kindLabel = NODE_KIND_LABEL.topic[lang];
+  const Icon = KIND_ICON.topic;
+  const tilt = tiltOf(id);
+  const live = data.live === true;
+  const tags = (data.tags ?? []).filter(Boolean).slice(0, 3);
+  const detail = data.detail?.trim() ?? '';
+  const recommended = data.starred === true;
+
+  return (
+    <motion.div
+      className="ev-node"
+      initial={live ? { scale: 0.6, rotate: -9, opacity: 0, y: -14 } : false}
+      animate={{ scale: 1, rotate: 0, opacity: 1, y: 0 }}
+      transition={
+        live
+          ? { type: 'spring', stiffness: 260, damping: 15, mass: 0.9 }
+          : { duration: 0 }
+      }
+    >
+      <article
+        style={{ '--tilt': `${tilt.toFixed(2)}deg` } as CSSProperties}
+        className={cn('ev-card', 'ev-card--topic', selected && 'is-selected', live && 'is-live')}
+      >
+        {/* 金色大图钉 */}
+        <span className={cn('ev-pin', PIN_CLASS.topic)} aria-hidden="true" />
+
+        <Handle type="target" position={Position.Left} className="ev-handle" />
+        <Handle type="source" position={Position.Right} className="ev-handle" />
+
+        {/* 底纹水印：望远镜 */}
+        <Icon className="ev-card__watermark" aria-hidden="true" />
+
+        <div className="ev-card__inner">
+          <header className="ev-card__head">
+            <Icon className="ev-card__glyph" size={13} strokeWidth={2.2} aria-hidden="true" />
+            <h4 className="ev-card__title ev-topic-title">{data.title}</h4>
+            <span className="ev-kind-chip ev-kind-chip--topic">{kindLabel}</span>
+          </header>
+          <p className="ev-card__body ev-topic-body">{data.content}</p>
+
+          {detail && (
+            <p className="ev-card__detail">
+              <span className="ev-card__detail-mark" aria-hidden="true">❝</span>
+              {detail}
+            </p>
+          )}
+
+          {/* 评分 chips（后端写入 tags：新颖 n / 可行 n / 影响 n） */}
+          {tags.length > 0 && (
+            <div className="ev-card__tags ev-topic-tags">
+              {tags.map((tag) => (
+                <span key={tag} className="ev-tag ev-tag--topic">
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 推荐深挖徽标（starred 由后端在 recommended=true 时置位） */}
+        {recommended && (
+          <span className="ev-topic-ribbon" title={t('topic.recommended')}>
+            <Star size={10} strokeWidth={0} fill="currentColor" aria-hidden="true" />
+            {t('topic.recommended')}
+          </span>
+        )}
+      </article>
+    </motion.div>
+  );
+}
+
 /** 模块级常量：避免每次渲染重建导致 React Flow 报错 */
 export const nodeTypes = {
   question: QuestionNode,
@@ -186,4 +269,5 @@ export const nodeTypes = {
   insight: InsightNode,
   source: SourceNode,
   gap: GapNode,
+  topic: TopicNode,
 } as const;
