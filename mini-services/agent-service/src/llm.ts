@@ -133,16 +133,20 @@ async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts)
   return completion.choices[0]?.message?.content ?? ''
 }
 
-/** 带重试的 LLM 调用：指数退避，共 2 次重试；返回体为空视为失败；429 限流用更长退避 */
+/** 带重试的 LLM 调用：普通错误短退避；一旦命中 429 限流切换长指数退避（8s/25s/60s/120s），总耐心 ≈3.5 分钟；返回体为空视为失败 */
 export async function llm(systemPrompt: string, userPrompt: string, opts?: LlmOpts): Promise<string> {
-  const delays = [0, 1000, 3000]
+  const MAX_TRIES = 5
+  const NORMAL_DELAYS = [1000, 3000, 5000, 8000] // 首次尝试不等待
+  const RATE_DELAYS = [8000, 25000, 60000, 120000] // 429 限流专用长退避
+  let rateLimited = false
+  let delayIdx = 0
   let lastErr: unknown = null
-  let attempt = 0
-  for (const d of delays) {
-    if (d > 0) {
-      // 上一轮错误若为 429 限流 → 改用长退避（5s / 15s）
-      const is429 = lastErr instanceof Error && /429|too many requests/i.test(lastErr.message)
-      await sleep(is429 ? (attempt === 1 ? 5000 : 15000) : d)
+  for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
+    if (attempt > 0) {
+      const table = rateLimited ? RATE_DELAYS : NORMAL_DELAYS
+      const d = table[Math.min(delayIdx, table.length - 1)]
+      delayIdx++
+      await sleep(d)
     }
     try {
       const out = await llmOnce(systemPrompt, userPrompt, opts)
@@ -150,8 +154,13 @@ export async function llm(systemPrompt: string, userPrompt: string, opts?: LlmOp
       lastErr = new Error('empty completion')
     } catch (e) {
       lastErr = e
+      if (e instanceof Error && /\b429\b|too many requests|rate.?limit/i.test(e.message)) {
+        if (!rateLimited) {
+          rateLimited = true
+          delayIdx = 0 // 进入限流轨道，从 8s 起退避
+        }
+      }
     }
-    attempt++
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr))
 }

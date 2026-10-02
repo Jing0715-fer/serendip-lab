@@ -434,10 +434,14 @@ export class AgentRuntime {
       const out = await this.callInvestigator(task, scratchpad)
       if (!out.ok) {
         if (out.kind === 'llm') {
-          // LLM 调用失败（429/网络）：退避后重试，宽松熔断（5 次）
+          // LLM 调用失败：429 限流 → 递增等待（20s/40s/60s/80s/90s）自愈，其他错误固定 5s；宽松熔断（5 次）
           llmFails++
-          insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, `LLM 调用失败（${llmFails}/5）`, `LLM call failed (${llmFails}/5)`)}: ${out.error}`, ok: false })
-          await sleep(5000)
+          const isRateLimit = /\b429\b|too many requests|rate.?limit/i.test(out.error)
+          const waitMs = isRateLimit ? Math.min(20_000 * llmFails, 90_000) : 5_000
+          insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId,
+            isRateLimit ? `API 限流，${Math.round(waitMs / 1000)}s 后自动重试（第 ${llmFails}/5 次）` : `LLM 调用失败（${llmFails}/5），5s 后重试`,
+            isRateLimit ? `API rate-limited — auto retry in ${Math.round(waitMs / 1000)}s (attempt ${llmFails}/5)` : `LLM call failed (${llmFails}/5), retry in 5s`)}: ${out.error}`, ok: false })
+          await sleep(waitMs)
           if (llmFails >= 5) {
             this.paused = true
             this.setPhase(null, 'paused')
