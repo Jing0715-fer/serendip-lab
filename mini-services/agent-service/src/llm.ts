@@ -205,6 +205,37 @@ export async function llmJson<T = any>(
   return { ok: false, kind: 'parse', error: '输出仍无法解析为 JSON' }
 }
 
+/**
+ * 外层耐心重试（Task 20：directions / explore 独立 LLM 链路共用）。
+ * 背景：llm() 内部退避（429 共 8/25/60/120s ≈3.5 分钟耐心）在限流持续超过
+ * 3.5 分钟时仍会耗尽——研究主循环有 investigate 级递增等待自愈，但这些
+ * 单发链路（深研方向 / 探索方案 / 反馈推导）此前无外层重试，一次 429 风暴
+ * 即静默失败。此包装在 llmJson 之上再加 2 轮：429 类失败等 60s/90s，
+ * 其他失败等 12s/20s；parse 类失败不重试（llmJson 内已有 Reflexion 2 轮）。
+ */
+export async function llmJsonSteady<T = any>(
+  systemPrompt: string,
+  userPrompt: string,
+  opts: {
+    face?: AgentFace
+    /** 每次进入外层等待前回调（写活动日志提示用户） */
+    onRetry?: (attempt: number, waitMs: number, error: string) => void
+  } = {}
+): Promise<{ ok: true; value: T } | { ok: false; kind: 'llm' | 'parse'; error: string }> {
+  const llmOpts: LlmOpts | undefined = opts.face ? { face: opts.face } : undefined
+  let out = await llmJson<T>(systemPrompt, userPrompt, undefined, llmOpts)
+  if (out.ok) return out
+  for (let i = 1; i <= 2; i++) {
+    const isRate = /\b429\b|too many requests|rate.?limit/i.test(out.error)
+    const wait = isRate ? (i === 1 ? 60_000 : 90_000) : i === 1 ? 12_000 : 20_000
+    opts.onRetry?.(i, wait, out.error)
+    await sleep(wait)
+    out = await llmJson<T>(systemPrompt, userPrompt, undefined, llmOpts)
+    if (out.ok) return out
+  }
+  return out
+}
+
 /** 连接测试：一次极小调用，返回延迟与模型名（设置面板"测试连接"用） */
 export async function testLlmConnection(): Promise<{ ok: boolean; latencyMs: number; model: string; provider: string; reply?: string; error?: string }> {
   const t0 = Date.now()

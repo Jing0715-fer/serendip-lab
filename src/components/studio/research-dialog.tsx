@@ -1,7 +1,9 @@
 'use client';
 
 // research-dialog.tsx — 启动自主研究：聚焦点 + 预算设置（Task 13 双语）
-import { useState } from 'react';
+// Task 20：探索反馈续研飞轮 —— store.researchPreset 非空时预填聚焦点（琥珀提示条说明来源），
+// 预填只消费一次（立即置回 null，用户后续输入不会被覆盖）；launch 成功后同样清空。
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import { FlaskConical, Loader2, Timer, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -23,14 +25,27 @@ export function ResearchDialog() {
   const startResearch = useStudio((s) => s.startResearch);
   const narrative = useStudio((s) => s.narrative);
   const nodes = useStudio((s) => s.nodes);
+  const researchPreset = useStudio((s) => s.researchPreset);
+  const setResearchPreset = useStudio((s) => s.setResearchPreset);
   const [focus, setFocus] = useState('');
   const [steps, setSteps] = useState(40);
   const [minutes, setMinutes] = useState(15);
   const [busy, setBusy] = useState(false);
+  const [presetApplied, setPresetApplied] = useState(false);
   const t = useT();
   const lang = useI18n((s) => s.lang);
 
   const continuing = nodes.length > 0 || narrative.length > 0;
+
+  // 预填探索反馈聚焦点（Task 20）：仅当 researchPreset 非空时写入输入框，随即消费置 null，
+  // 避免用户已输入的内容被后续 preset 变化覆盖（setResearchPreset 为 zustand 稳定引用）。
+  useEffect(() => {
+    if (open && researchPreset) {
+      setFocus(researchPreset);
+      setPresetApplied(true);
+      setResearchPreset(null);
+    }
+  }, [open, researchPreset, setResearchPreset]);
 
   async function launch() {
     setBusy(true);
@@ -42,6 +57,8 @@ export function ResearchDialog() {
       });
       toast.success(continuing ? t('rd.continued') : t('rd.started'));
       setFocus('');
+      setPresetApplied(false);
+      setResearchPreset(null);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : t('rd.failed'));
     } finally {
@@ -49,8 +66,19 @@ export function ResearchDialog() {
     }
   }
 
+  function close() {
+    setOpen(false);
+    setPresetApplied(false);
+  }
+
   return (
-    <Dialog open={open} onOpenChange={(v) => setOpen(v)}>
+    <Dialog
+      open={open}
+      onOpenChange={(v) => {
+        if (v) setOpen(true);
+        else close();
+      }}
+    >
       <DialogContent className="max-w-[480px] border-stone-300 bg-[#f7f4ee] dark:border-stone-700 dark:bg-[#171411]">
         <DialogHeader>
           <DialogTitle className="font-display flex items-center gap-2 text-[15px] text-stone-800 dark:text-stone-100">
@@ -68,6 +96,11 @@ export function ResearchDialog() {
             <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-stone-700 dark:text-stone-200">
               <Zap size={12} className="text-amber-700" /> {t('rd.focus')}
             </div>
+            {presetApplied && (
+              <p className="rounded-lg border border-amber-600/30 bg-amber-100/70 px-2.5 py-1.5 text-[11px] leading-relaxed text-amber-800 dark:border-amber-500/30 dark:bg-amber-950/50 dark:text-amber-300">
+                {t('rd.presetNote')}
+              </p>
+            )}
             <Textarea
               value={focus}
               onChange={(e) => setFocus(e.target.value)}
@@ -108,7 +141,7 @@ export function ResearchDialog() {
           </div>
         </div>
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={() => setOpen(false)} className="border-stone-300 text-[13px]">
+          <Button variant="outline" onClick={close} className="border-stone-300 text-[13px]">
             {t('rd.cancel')}
           </Button>
           <Button

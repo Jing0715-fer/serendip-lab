@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { cn } from '@/lib/utils';
 import { useStudio, selectInspectorNode, fmtTime } from '@/store/studio';
-import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, fmt, useI18n, useT } from '@/lib/i18n';
+import { EDGE_RELATION_LABEL, EVIDENCE_LEVEL_LABEL, NODE_KIND_LABEL, fmt, useI18n, useT } from '@/lib/i18n';
 import type { EdgeRelation } from '@/lib/types';
 import { resolveCitationUrl, citationLabel } from '@/lib/citation';
 
@@ -127,8 +127,13 @@ export function NodeInspector() {
             </div>
           )}
 
-          {/* 元信息 */}
-          <div className="flex flex-wrap items-center gap-2 text-[11.5px] text-stone-500 dark:text-stone-400">
+          {/* 元信息：等级徽章（Task 20，暗色底样式由 .dark .insp-meta 域接管） + 原文链接 + 置信度 + 状态 */}
+          <div className="insp-meta flex flex-wrap items-center gap-2 text-[11.5px] text-stone-500 dark:text-stone-400">
+            {node.level && (
+              <span className={`ev-level ev-level--${node.level}`} title={EVIDENCE_LEVEL_LABEL[node.level][lang]}>
+                {EVIDENCE_LEVEL_LABEL[node.level][lang]}
+              </span>
+            )}
             {node.sourceUrl && citationUrl && (
             <a
               href={citationUrl}

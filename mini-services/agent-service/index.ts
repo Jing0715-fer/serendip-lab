@@ -305,7 +305,7 @@ const server = Bun.serve({
     }
 
     // --- /api/agent/sessions/:id 子操作 ---
-    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions|explorations))?$/)
+    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions|explorations|resynthesize))?$/)
     if (subMatch) {
       const id = subMatch[1]
       const action = subMatch[2]
@@ -379,6 +379,17 @@ const server = Bun.serve({
           return json({ ok: true, running: exploreJobOf(id) })
         }
         return errJson('method not allowed', 405)
+      }
+
+      // 重综合（Task 20）：证据墙变化后不重跑研究，仅重新生成综述；异步执行，结果经 SSE state/message 推送
+      if (action === 'resynthesize' && method === 'POST') {
+        const body = await readBody(request)
+        if (body.lang) setSessionLang(id, normLang(body.lang))
+        const existing = AgentRuntime.find(id)
+        if (existing?.running) return errJson('agent_busy', 409)
+        if (listNodes(id).length === 0) return errJson('no_evidence', 400)
+        void AgentRuntime.get(id).resynthesize()
+        return json({ ok: true })
       }
 
       if (action === 'control' && method === 'POST') {

@@ -5,9 +5,9 @@ import {
   listNodes, listEdges, listMessages, listQuestions,
   insertMessage, insertActivity, updateSessionFields, getSessionRow,
   findNodeByTitle, insertNode, updateNode, updateNodeContent, insertEdge,
-  replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS,
+  replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS, EVIDENCE_LEVELS,
   type SessionPhase, type AgentStatus, type Plan, type PlanTask,
-  type BoardNode, type ChatMessage, type ResearchQuestion,
+  type BoardNode, type ChatMessage, type ResearchQuestion, type EvidenceLevel,
 } from './db'
 import { llmJson } from './llm'
 import { INTERVIEWER_PROMPT, PLANNER_PROMPT, SYNTHESIZER_PROMPT, buildInvestigatorPrompt } from './prompts'
@@ -29,6 +29,12 @@ const AUTO_START_BUDGET = { maxSteps: 40, maxMinutes: 15 } as const
 
 /** 默认会话标题（任何一种都允许被 title_suggestion 覆盖） */
 const DEFAULT_SESSION_TITLES = ['新调查', '新课题', 'New Project']
+
+/** 归一化证据等级：严格匹配六个合法值，否则 null（未定级）；非法值一律落 null */
+function normalizeLevel(v: unknown): EvidenceLevel | null {
+  const s = String(v ?? '').trim().toLowerCase()
+  return (EVIDENCE_LEVELS as string[]).includes(s) ? (s as EvidenceLevel) : null
+}
 
 type ScratchEntry = { thought: string; action: { tool: string; args: any }; observation: string }
 
@@ -326,6 +332,27 @@ export class AgentRuntime {
     this.running = false
   }
 
+  // ---------- 重综合（Task 20）：证据墙变化后无需重跑研究，直接重新生成综述 ----------
+  async resynthesize(): Promise<{ ok: boolean; error?: string }> {
+    if (this.running) return { ok: false, error: 'agent_busy' }
+    if (listNodes(this.sessionId).length === 0) return { ok: false, error: 'no_evidence' }
+    this.running = true
+    try {
+      insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), 'resynthesizeStart') })
+      await this.callSynthesizer(true)
+      this.setPhase('done', 'done')
+      this.emitState()
+      return { ok: true }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      insertActivity(this.sessionId, { type: 'notice', summary: `重综合失败: ${msg}`, ok: false })
+      this.setPhase(null, 'error')
+      return { ok: false, error: msg }
+    } finally {
+      this.running = false
+    }
+  }
+
   private async mainLoop(focus: string | undefined): Promise<string> {
     this.setPhase('planning', 'thinking')
     let plan = await this.callPlanner(focus)
@@ -579,6 +606,9 @@ export class AgentRuntime {
     if (!content) return { error: '缺少 content' }
     const tags = Array.isArray(args.tags) ? args.tags.map(String).slice(0, 6) : []
     const confidence = args.confidence != null ? clamp(Number(args.confidence), 0, 1) : null
+    // Task 20 打磨：证据等级只对 evidence/source 卡有意义（研究类型分级），
+    // 假说/洞见/课题等语句型卡片不带 level，防止语义泄漏（真实测试发现 hypothesis 被标 animal）
+    const level = kind === 'evidence' || kind === 'source' ? normalizeLevel(args.level) : null
 
     // 同 title 节点 → 更新
     const existing = findNodeByTitle(this.sessionId, title)
@@ -587,7 +617,8 @@ export class AgentRuntime {
         this.sessionId, existing.id, content, confidence,
         args.sourceRef ? String(args.sourceRef) : null,
         args.sourceUrl ? String(args.sourceUrl) : null,
-        args.detail ? String(args.detail) : null
+        args.detail ? String(args.detail) : null,
+        level
       )
       this.emitState()
       return { ok: true, updated: true, nodeId: existing.id, title: existing.title }
@@ -601,6 +632,7 @@ export class AgentRuntime {
       sourceUrl: args.sourceUrl ? String(args.sourceUrl) : null,
       sourceRef: args.sourceRef ? String(args.sourceRef) : null,
       confidence,
+      level,
       pinnedBy: 'agent',
     })
     insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '新增证据节点', 'New card pinned')} [${kind}] ${node.title}` })
@@ -655,6 +687,12 @@ export class AgentRuntime {
       content: patch.content != null ? String(patch.content) : undefined,
       status: patch.status != null ? String(patch.status) : undefined,
       tags: Array.isArray(patch.tags) ? patch.tags.map(String) : undefined,
+      level:
+        patch.level !== undefined
+          ? node.kind === 'evidence' || node.kind === 'source'
+            ? normalizeLevel(patch.level)
+            : null
+          : undefined,
     })
     this.emitState()
     return { ok: true }
@@ -859,7 +897,7 @@ export class AgentRuntime {
     const userPrompt = [
       `【核心问题】${plan?.focusQuestion || '（尚未明确）'}`,
       `【假说】${(plan?.hypotheses || []).map((h) => `- ${h.title}（依据: ${h.basis}）`).join('\n') || '（无）'}`,
-      `【证据节点】\n${nodes.map((n) => `- [${n.kind}] ${n.title}: ${n.content}${n.sourceRef ? ` [${n.sourceRef}]` : n.sourceUrl ? ` [${n.sourceUrl}]` : ''}${n.confidence != null ? ` (置信度 ${n.confidence})` : ''}`).join('\n') || '（无）'}`,
+      `【证据节点】\n${nodes.map((n) => `- [${n.kind}]${n.level ? ` [${n.level}]` : ''} ${n.title}: ${n.content}${n.sourceRef ? ` [${n.sourceRef}]` : n.sourceUrl ? ` [${n.sourceUrl}]` : ''}${n.confidence != null ? ` (置信度 ${n.confidence})` : ''}`).join('\n') || '（无）'}`,
       `【证据关系】\n${edges.map((e) => `- ${titleOf(e.source)} --${e.relation}--> ${titleOf(e.target)}`).join('\n') || '（无）'}`,
       `【已完成任务小结】\n${doneTasks.map((t) => `- ${t.goal} → ${t.summary || '（无小结）'}`).join('\n') || '（无）'}`,
       `【研究期间用户的补充消息】\n${steers.map((m) => `- ${m.content.slice(0, 300)}`).join('\n') || '（无）'}`,
@@ -925,6 +963,7 @@ export class AgentRuntime {
               sourceUrl: op.sourceUrl ? String(op.sourceUrl) : undefined,
               detail: op.detail ? String(op.detail) : undefined,
               confidence: op.confidence,
+              level: normalizeLevel(op.level) ?? undefined,
             })
           } else if (op?.op === 'link_evidence' && op.from && op.to) {
             this.toolLinkEvidence({

@@ -18,6 +18,10 @@ export type NodeKind = 'question' | 'hypothesis' | 'evidence' | 'insight' | 'sou
 
 export type EdgeRelation = 'supports' | 'contradicts' | 'relates' | 'derives' | 'answers'
 
+// 证据等级（Task 20）：user=用户一手实验数据（权重最高）/ rct=临床RCT / cohort=队列与临床观察 /
+// animal=动物因果实验（KO/FMT/GF）/ invitro=体外与细胞系统 / computational=计算与相关性推断
+export type EvidenceLevel = 'user' | 'rct' | 'cohort' | 'animal' | 'invitro' | 'computational'
+
 export type BoardNode = {
   id: string
   kind: NodeKind
@@ -27,6 +31,8 @@ export type BoardNode = {
   sourceUrl: string | null
   sourceRef: string | null
   confidence: number | null
+  /** 证据等级（Task 20）：null = 未定级 */
+  level: EvidenceLevel | null
   starred: boolean
   pinnedBy: 'agent' | 'user'
   status: 'new' | 'strong' | 'weak' | 'contradicted'
@@ -198,6 +204,7 @@ export type SessionFull = {
 // topic：综合分析师提炼出的「值得深入研究的科学课题」卡（Task 14 新流程，醒目钉在证据墙课题栏）
 export const NODE_KINDS: NodeKind[] = ['question', 'hypothesis', 'evidence', 'insight', 'source', 'gap', 'topic']
 export const EDGE_RELATIONS: EdgeRelation[] = ['supports', 'contradicts', 'relates', 'derives', 'answers']
+export const EVIDENCE_LEVELS: EvidenceLevel[] = ['user', 'rct', 'cohort', 'animal', 'invitro', 'computational']
 
 // ---------- 数据库初始化 ----------
 const DATA_DIR = join(process.cwd(), 'data')
@@ -285,6 +292,25 @@ try {
   console.error('[db] migrate sessions.directions failed:', e)
 }
 
+// 轻量迁移：老库补 nodes.level 列（证据等级，Task 20）
+try {
+  const cols = db.query('PRAGMA table_info(nodes)').all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'level')) {
+    db.exec('ALTER TABLE nodes ADD COLUMN level TEXT')
+    console.log('[db] migrated: nodes.level added')
+  }
+} catch (e) {
+  console.error('[db] migrate nodes.level failed:', e)
+}
+
+// 语义清理（幂等）：证据等级只属于 evidence/source 卡；上线初期（真实测试发现）
+// hypothesis/topic/gap 曾被透传 level → 每次启动清一次非证据卡的残留等级
+try {
+  db.exec(`UPDATE nodes SET level=NULL WHERE kind NOT IN ('evidence','source')`)
+} catch (e) {
+  console.error('[db] level semantic cleanup failed:', e)
+}
+
 // 启动时：未完成的会话标记 interrupted；awaiting_user 一并复位为 interview
 // （P1 修复：runtime 已随进程丢失，若保留 awaiting_user，用户回复将无法注入且输入框永久锁死）
 db.exec(
@@ -307,7 +333,7 @@ type NodeRow = {
   tags: string; source_url: string | null; source_ref: string | null
   confidence: number | null; starred: number; pinned_by: string; status: string
   x: number | null; y: number | null; created_at: number; updated_at: number
-  detail: string | null
+  detail: string | null; level: string | null
 }
 type EdgeRow = {
   id: string; session_id: string; source: string; target: string
@@ -349,6 +375,7 @@ function mapNode(r: NodeRow): BoardNode {
     sourceUrl: r.source_url,
     sourceRef: r.source_ref,
     confidence: r.confidence,
+    level: EVIDENCE_LEVELS.includes(r.level as EvidenceLevel) ? (r.level as EvidenceLevel) : null,
     starred: !!r.starred,
     pinnedBy: r.pinned_by as 'agent' | 'user',
     status: r.status as BoardNode['status'],
@@ -567,13 +594,13 @@ export function insertNode(
   const id = n.id || uuid()
   const t = now()
   db.run(
-    `INSERT INTO nodes(id,session_id,kind,title,content,detail,tags,source_url,source_ref,confidence,starred,pinned_by,status,x,y,created_at,updated_at)
-     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+    `INSERT INTO nodes(id,session_id,kind,title,content,detail,tags,source_url,source_ref,confidence,level,starred,pinned_by,status,x,y,created_at,updated_at)
+     VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     [
       id, sessionId, n.kind, n.title.slice(0, 60), (n.content || '').slice(0, 400),
       (n.detail || '').slice(0, 1200) || null,
       JSON.stringify(n.tags || []), n.sourceUrl ?? null, n.sourceRef ?? null,
-      n.confidence ?? null, n.starred ? 1 : 0, n.pinnedBy || 'agent', n.status || 'new',
+      n.confidence ?? null, n.level ?? null, n.starred ? 1 : 0, n.pinnedBy || 'agent', n.status || 'new',
       null, null, t, t,
     ]
   )
@@ -581,7 +608,7 @@ export function insertNode(
     id, kind: n.kind, title: n.title.slice(0, 60), content: (n.content || '').slice(0, 400),
     detail: (n.detail || '').slice(0, 1200) || null,
     tags: n.tags || [], sourceUrl: n.sourceUrl ?? null, sourceRef: n.sourceRef ?? null,
-    confidence: n.confidence ?? null, starred: !!n.starred, pinnedBy: n.pinnedBy || 'agent',
+    confidence: n.confidence ?? null, level: n.level ?? null, starred: !!n.starred, pinnedBy: n.pinnedBy || 'agent',
     status: n.status || 'new', createdAt: t, position: null,
   }
 }
@@ -601,7 +628,7 @@ export function findNodeByTitle(sessionId: string, title: string): BoardNode | n
   return nodes.find((n) => norm(n.title) === t) ?? null
 }
 
-export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pick<BoardNode, 'confidence' | 'content' | 'status' | 'tags' | 'title' | 'starred'>>) {
+export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pick<BoardNode, 'confidence' | 'content' | 'status' | 'tags' | 'title' | 'starred' | 'level'>>) {
   const sets: string[] = []
   const vals: any[] = []
   if (patch.confidence !== undefined) { sets.push('confidence=?'); vals.push(patch.confidence) }
@@ -610,14 +637,15 @@ export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pic
   if (patch.tags !== undefined) { sets.push('tags=?'); vals.push(JSON.stringify(patch.tags)) }
   if (patch.title !== undefined) { sets.push('title=?'); vals.push(patch.title.slice(0, 60)) }
   if (patch.starred !== undefined) { sets.push('starred=?'); vals.push(patch.starred ? 1 : 0) }
+  if (patch.level !== undefined) { sets.push('level=?'); vals.push(patch.level != null && EVIDENCE_LEVELS.includes(patch.level) ? patch.level : null) }
   if (!sets.length) return
   db.run(`UPDATE nodes SET ${sets.join(',')}, updated_at=${now()} WHERE id=? AND session_id=?`, [...vals, nodeId, sessionId])
 }
 
-export function updateNodeContent(sessionId: string, nodeId: string, content: string, confidence: number | null, sourceRef: string | null, sourceUrl: string | null, detail?: string | null) {
+export function updateNodeContent(sessionId: string, nodeId: string, content: string, confidence: number | null, sourceRef: string | null, sourceUrl: string | null, detail?: string | null, level?: EvidenceLevel | null) {
   db.run(
-    `UPDATE nodes SET content=?, confidence=?, source_ref=COALESCE(?, source_ref), source_url=COALESCE(?, source_url), detail=COALESCE(?, detail), updated_at=${now()} WHERE id=? AND session_id=?`,
-    [content.slice(0, 400), confidence, sourceRef, sourceUrl, detail ? detail.slice(0, 1200) : null, nodeId, sessionId]
+    `UPDATE nodes SET content=?, confidence=?, source_ref=COALESCE(?, source_ref), source_url=COALESCE(?, source_url), detail=COALESCE(?, detail), level=COALESCE(?, level), updated_at=${now()} WHERE id=? AND session_id=?`,
+    [content.slice(0, 400), confidence, sourceRef, sourceUrl, detail ? detail.slice(0, 1200) : null, level ?? null, nodeId, sessionId]
   )
 }
 

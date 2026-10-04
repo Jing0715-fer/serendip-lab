@@ -4,7 +4,7 @@
 // Agent 产出语言由前端随请求透传 lang 到 agent-service，后端按会话注入语言指令。
 import { useCallback } from 'react';
 import { create } from 'zustand';
-import type { AgentFace, AgentStatus, EdgeRelation, NodeKind, SessionPhase } from './types';
+import type { AgentFace, AgentStatus, EdgeRelation, EvidenceLevel, NodeKind, SessionPhase } from './types';
 
 export type Lang = 'zh' | 'en';
 const STORAGE_KEY = 'serendip-lang';
@@ -89,6 +89,9 @@ const DICT = {
   'export.bibItemDesc': ['证据墙文献源（.bib，可导入文献管理器）', 'Wall literature sources (.bib, imports into citation managers)'],
   'export.bibEmpty': ['证据墙上还没有可导出的文献源卡片', 'No literature-source cards on the wall yet'],
   'export.bibDownloaded': ['BibTeX 已下载（{n} 条文献）', 'BibTeX downloaded ({n} entries)'],
+  'export.bibStarItem': ['加星文献 · 精读清单', 'Starred · reading list'],
+  'export.bibStarItemDesc': ['仅导出加星文献卡（.bib 精读清单）', 'Starred cards only (.bib reading list)'],
+  'export.bibStarEmpty': ['还没有加星且带文献标识的卡片——先在证据墙上给关键文献点亮星标', 'No starred literature cards yet — star key cards on the wall first'],
   'export.directions': ['## 深研方向', '## Research Paths'],
   'export.dirWhy': ['**为什么值得做**：{text}', '**Why it matters**: {text}'],
   'export.dirPlan': ['**研究目标**：{text}', '**Objective**: {text}'],
@@ -171,6 +174,10 @@ const DICT = {
     'Let Serendip distill 3-4 research-worthy directions from the evidence chain, each with a full research plan.',
   ],
   'narrative.ctaButton': ['提炼深研方向', 'Distill research paths'],
+  'narrative.resync': ['重梳理', 'Re-synthesize'],
+  'narrative.resyncHint': ['证据墙变化后（补充素材/反馈证据），按当前墙上内容重新生成研究综述', 'Re-generate the review from the current wall (after new clues or feedback evidence)'],
+  'narrative.resyncBusy': ['正在重新梳理综述…', 'Re-synthesizing the review…'],
+  'narrative.resyncDone': ['综述已按最新证据墙重新梳理', 'Review re-synthesized from the latest wall'],
 
   /* 问题清单标签页 */
   'question.novelty': ['新颖性', 'Novelty'],
@@ -268,6 +275,8 @@ const DICT = {
     'Serendip will compare against the hypothesis → re-organize the wall → revise the plan → propose next steps (⌘/Ctrl+Enter)',
   ],
   'explore.submit': ['提交反馈', 'Submit feedback'],
+  'explore.nextRun': ['纳入反馈，开启下一轮研究', 'Fold in feedback · next run'],
+  'explore.nextRunHint': ['把课题与反馈推导的证据作为聚焦点，开启一轮新的自主研究（研究期间钉上的反馈证据会保留在墙上）', 'Start a new autonomous run focused on this topic — feedback evidence pinned on the wall carries over'],
   'explore.feedbackBusyTitle': ['正在推导你的反馈…', 'Reasoning over your feedback…'],
   'explore.feedbackBusyBody': [
     '对照原假说分析结果 → 重整证据墙逻辑 → 修正方案 → 给出下一步方向。通常需要 30-90 秒，完成后证据墙会同步更新。',
@@ -319,6 +328,8 @@ const DICT = {
   'canvas.filterLabel': ['类型', 'Kind'],
   'canvas.filterHint': ['按卡片类型筛选显示', 'Filter visible cards by kind'],
   'canvas.filterReset': ['重置筛选', 'Reset filter'],
+  'canvas.levelLabel': ['证据等级', 'Evidence level'],
+  'canvas.levelFilterHint': ['按证据等级筛选显示', 'Filter evidence cards by level'],
 
   /* 添加素材对话框 */
   'note.title': ['添加素材', 'Add a card'],
@@ -359,6 +370,7 @@ const DICT = {
   'rd.started': ['研究已启动，Agent 正在部署…', 'Research launched — the agent is deploying…'],
   'rd.continued': ['新一轮研究已启动，Agent 正在部署…', 'New round launched — the agent is deploying…'],
   'rd.failed': ['启动失败', 'Failed to start'],
+  'rd.presetNote': ['聚焦点已预填自探索课题与反馈，可修改', 'Focus pre-filled from the explored topic & feedback — editable'],
 
   /* 卡片检视器 */
   'ins.pinnedAt': ['收录于 {time}', 'Pinned {time}'],
@@ -469,6 +481,16 @@ export const NODE_KIND_LABEL: Record<NodeKind, Record<Lang, string>> = {
   source: { zh: '文献源', en: 'Source' },
   gap: { zh: '待查', en: 'To probe' },
   topic: { zh: '深研课题', en: 'Research Topic' },
+};
+
+/** 证据等级标签（Task 20）：徽章 / 筛选 chip / 检视器共用；语义与配色见 EVIDENCE_LEVEL_COLOR */
+export const EVIDENCE_LEVEL_LABEL: Record<EvidenceLevel, Record<Lang, string>> = {
+  user: { zh: '一手数据', en: 'User data' },
+  rct: { zh: '临床RCT', en: 'Clinical RCT' },
+  cohort: { zh: '队列研究', en: 'Cohort' },
+  animal: { zh: '动物因果', en: 'Animal causal' },
+  invitro: { zh: '体外/细胞', en: 'In-vitro' },
+  computational: { zh: '计算推断', en: 'Computational' },
 };
 
 export const EDGE_RELATION_LABEL: Record<EdgeRelation, Record<Lang, string>> = {

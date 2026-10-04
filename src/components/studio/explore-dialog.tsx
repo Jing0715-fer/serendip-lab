@@ -278,6 +278,7 @@ export function ExploreDialog() {
   const generate = useStudio((s) => s.generateExplorePlan);
   const regenerate = useStudio((s) => s.regenerateExplorePlan);
   const submitFeedback = useStudio((s) => s.submitExploreFeedback);
+  const setResearchPreset = useStudio((s) => s.setResearchPreset);
   const [text, setText] = useState('');
   const t = useT();
   const lang = useI18n((s) => s.lang);
@@ -290,6 +291,17 @@ export function ExploreDialog() {
     if (!text.trim() || !nodeId) return;
     await submitFeedback(nodeId, text);
     setText('');
+  }
+
+  /* 反馈续研飞轮（Task 20）：课题标题 + 最近一轮 nextSteps 前 2 条拼进括号 → 预填续研聚焦点 */
+  function startNextRun() {
+    if (!node || !exploration || busy !== null) return;
+    const latest = exploration.rounds[exploration.rounds.length - 1];
+    const steps = (latest?.nextSteps ?? []).slice(0, 2);
+    const suffix = steps.length ? `（结合反馈：${steps.join('；')}）` : '';
+    const focus = `${node.title}${suffix}`.slice(0, 300);
+    setResearchPreset(focus);
+    toast.success(t('explore.nextRun'));
   }
 
   /* 复制 Markdown（Task 17）：当前方案 + 全部反馈轮次 → 剪贴板，可贴进实验记录本 */
@@ -478,6 +490,31 @@ export function ExploreDialog() {
                 {t('explore.submit')}
               </Button>
             </div>
+          </div>
+        )}
+
+        {/* 反馈续研飞轮（Task 20）：有反馈轮次后，把课题+反馈推导作为聚焦点开启下一轮自主研究 */}
+        {exploration && exploration.rounds.length > 0 && (
+          <div className="shrink-0 border-t border-stone-200/80 pt-3 dark:border-stone-700/60">
+            <button
+              type="button"
+              onClick={startNextRun}
+              disabled={busy !== null}
+              title={t('explore.nextRunHint')}
+              className="flex w-full items-center gap-3 rounded-xl border border-[#a3450f]/40 bg-gradient-to-b from-[#a3450f] to-[#8a380c] px-3.5 py-3 text-left shadow-md transition-all hover:from-[#8f3c0c] hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-55"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15 text-amber-50">
+                <RefreshCw size={15} aria-hidden="true" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-semibold text-amber-50">
+                  {t('explore.nextRun')}
+                </span>
+                <span className="block text-[10.5px] leading-relaxed text-amber-100/80">
+                  {t('explore.nextRunHint')}
+                </span>
+              </span>
+            </button>
           </div>
         )}
       </DialogContent>

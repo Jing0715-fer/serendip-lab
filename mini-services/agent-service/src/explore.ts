@@ -12,7 +12,7 @@ import {
   saveExploration, getExploration, deleteExploration, NODE_KINDS, EDGE_RELATIONS,
   type BoardNode, type TopicPlan, type FeedbackRound, type Exploration, type ExploreVerdict,
 } from './db'
-import { llmJson } from './llm'
+import { llmJsonSteady } from './llm'
 import { EXPLORE_PROMPT, FEEDBACK_PROMPT } from './prompts'
 import { getSessionLang, langDirective, noticeFor, type Lang } from './lang'
 import { stateSnapshot, resolveNodeByTitle } from './runtime'
@@ -211,13 +211,17 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
         const content = String(op.content || '').trim()
         if (!title || !content) continue
         const existing = findNodeByTitle(sessionId, title)
+        // Task 20 打磨：用户一手实验数据（sourceRef 为 User experiment 等）自动标 user 等级——
+        // 反馈链路钉墙的实验数据是最高权重证据，此前漏标 level（真实测试发现）
+        const isUserExp = /user[\s_-]*experiment|用户实验|用户数据|一手数据/i.test(String(op.sourceRef || ''))
         if (existing) {
           updateNodeContent(
             sessionId, existing.id, content,
             op.confidence != null ? Math.min(1, Math.max(0, Number(op.confidence))) : null,
             op.sourceRef ? String(op.sourceRef) : null,
             op.sourceUrl ? String(op.sourceUrl) : null,
-            op.detail ? String(op.detail) : null
+            op.detail ? String(op.detail) : null,
+            kind === 'evidence' && (isUserExp || op.level === 'user') ? 'user' : null
           )
           applied.push(L(lang, `更新卡片「${title}」`, `Updated card “${title}”`))
         } else {
@@ -227,6 +231,7 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
             sourceRef: op.sourceRef ? String(op.sourceRef) : null,
             sourceUrl: op.sourceUrl ? String(op.sourceUrl) : null,
             confidence: op.confidence != null ? Math.min(1, Math.max(0, Number(op.confidence))) : null,
+            level: kind === 'evidence' && (isUserExp || op.level === 'user') ? 'user' : null,
             pinnedBy: 'agent',
           })
           applied.push(L(lang, `钉上新卡片「${title}」`, `Pinned new card “${title}”`))
@@ -288,7 +293,17 @@ export async function generateExplorePlan(sessionId: string, nodeId: string): Pr
         type: 'notice',
         summary: noticeFor(lang, 'explorePlanStart', { title: node.title.slice(0, 40) }),
       })
-      const out = await llmJson(EXPLORE_PROMPT, `${briefing}\n\n${langDirective(lang)}`, undefined, { face: 'planner' })
+      // Task 20：外层耐心重试（429 风暴下方案生成不再静默失败）
+      const out = await llmJsonSteady(EXPLORE_PROMPT, `${briefing}\n\n${langDirective(lang)}`, {
+        face: 'planner',
+        onRetry: (i, wait, err) => {
+          insertActivity(sessionId, {
+            type: 'notice',
+            ok: false,
+            summary: L(lang, `方案生成受阻（${err.slice(0, 60)}）——API 限流/暂不可用，${Math.round(wait / 1000)}s 后自动重试（第 ${i}/2 次）`, `Plan generation stalled (${err.slice(0, 60)}) — API rate-limited, retry ${i}/2 in ${Math.round(wait / 1000)}s`),
+          })
+        },
+      })
       if (!out.ok) throw new Error(out.error)
       const plan = normPlan(out.value)
       if (!plan) throw new Error(lang === 'en' ? 'model returned no valid plan' : '模型未返回有效方案')
@@ -366,7 +381,17 @@ export async function submitExploreFeedback(
     const started = Date.now()
     try {
       insertActivity(sessionId, { type: 'notice', summary: noticeFor(lang, 'feedbackStart') })
-      const out = await llmJson(FEEDBACK_PROMPT, userPrompt, undefined, { face: 'synthesizer' })
+      // Task 20：外层耐心重试（反馈推导不丢用户输入——失败自动重试而非静默报错）
+      const out = await llmJsonSteady(FEEDBACK_PROMPT, userPrompt, {
+        face: 'synthesizer',
+        onRetry: (i, wait, err) => {
+          insertActivity(sessionId, {
+            type: 'notice',
+            ok: false,
+            summary: L(lang, `反馈推导受阻（${err.slice(0, 60)}）——API 限流/暂不可用，${Math.round(wait / 1000)}s 后自动重试（第 ${i}/2 次）`, `Feedback analysis stalled (${err.slice(0, 60)}) — API rate-limited, retry ${i}/2 in ${Math.round(wait / 1000)}s`),
+          })
+        },
+      })
       if (!out.ok) throw new Error(out.error)
       const v = out.value || {}
 

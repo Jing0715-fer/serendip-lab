@@ -12,7 +12,9 @@ export function seedDemoSession(lang: 'zh' | 'en' = 'zh'): string {
   // 节点 id 全局唯一（nodes.id 为主键）：按会话前缀生成，避免多个 demo 会话冲突
   const nid = (short: string) => `${sid.slice(0, 8)}-${short}`
 
-  // ---- 节点（13） ----
+  // ---- 节点（15） ----
+  // Task 20：证据卡补 level 证据等级（rct/cohort/animal/invitro/computational 各至少一张；
+  // i1 洞见保持未定级 null，同步演示「未定级」卡面）。引用均经 Europe PMC 实测验证的真实 PMID。
   const nodes: [string, string, string, string, any][] = lang === 'en' ? [
     ['demo-q1', 'question', 'Why have mitochondria kept their own genome for ~2 billion years?',
       'Since endosymbiosis, most genes have relocated to the nuclear genome, yet a handful of core genes remain. Transfer is mechanically feasible (successful cases exist) — why did evolution never empty mtDNA?',
@@ -44,28 +46,42 @@ export function seedDemoSession(lang: 'zh' | 'en' = 'zh'): string {
         sourceRef: 'PMID: 27135164 · Cell Syst 2016',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/27135164/',
         detail: 'Johnston & Williams performed phylogenetically controlled comparisons across hundreds of eukaryotes, finding mtDNA-retained proteins are significantly more hydrophobic than successfully transferred homologs — hydrophobicity is one of the strongest predictors of gene retention. This is the most systematic quantitative evidence for H1 (click the PMID above to open the abstract).',
-        tags: ['comparative genomics'], confidence: 0.9, status: 'strong' }],
+        tags: ['comparative genomics'], confidence: 0.9, status: 'strong', level: 'computational' }],
     ['demo-e2', 'evidence', 'Mitochondrial ribosomes dock on the inner membrane, dedicated to translating highly hydrophobic core subunits like COX1/CYTB',
       'EM and biochemical evidence shows mitochondrial ribosomes anchored to the inner membrane face, specializing in translating hydrophobic core subunits — supporting the co-translational insertion model.',
       {
         sourceRef: 'PMID: 42660304 · J Struct Biol 2026',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/42660304/',
         detail: 'Latest structural evidence: factors such as yeast Mba1 anchor mitochondrial ribosomes to the inner membrane face, so that highly hydrophobic subunits like COX1/CYTB insert directly into the membrane as they are translated — "co-translational insertion" is no longer just a model but a visible structural fact (click the PMID to open the paper).',
-        confidence: 0.8, status: 'strong' }],
+        confidence: 0.8, status: 'strong', level: 'invitro' }],
     ['demo-e3', 'evidence', 'Exception: lineages such as S. cerevisiae have relocated part of their mitochondrial tRNA genes to the nucleus',
       'tRNAs are not subject to the membrane-protein hydrophobicity constraint; several lineages successfully relocated them and rely on tRNA import back into mitochondria — retention is not a single iron law.',
       {
         sourceRef: 'PMID: 10066161 · Science 1999',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/10066161/',
         detail: 'The classic review by Gray, Burger & Lang (Science 1999) synthesizes cross-lineage evidence: non-membrane-protein genes such as tRNAs do have successful relocation cases, maintained by tRNA import. This means the hydrophobicity constraint explains "why membrane proteins stay", not the full retention pattern — retention is a multi-factor verdict (click the PMID to open the paper).',
-        confidence: 0.75 }],
+        confidence: 0.75, level: 'computational' }],
     ['demo-e4', 'evidence', 'Nuclear–mitochondrial expression imbalance diseases (e.g. LHON) reveal the clinical weight of stoichiometric control',
       'Diseases such as LHON show that fine-grained control of subunit stoichiometry carries physiological and clinical significance.',
       {
         sourceRef: 'PMID: 3201231 · Science 1988',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/3201231/',
         detail: 'Wallace\'s team first mapped LHON to an mtDNA mutation in Science in 1988 — a defect in a single mtDNA-encoded subunit suffices to cause optic neuropathy. Clinically, this shows the expression balance of mitochondrially encoded subunits has irreplaceable physiological weight, supporting H2\'s "stoichiometric control" argument (click the PMID to open the paper).',
-        confidence: 0.7 }],
+        confidence: 0.7, level: 'cohort' }],
+    ['demo-e5', 'evidence', 'RCT: idebenone improves visual outcomes in LHON (electron bypass of the defective respiratory chain)',
+      'The RHODOS trial (85 LHON patients, randomized double-blind placebo-controlled) showed significant best-corrected visual acuity improvement with idebenone — RCT-level evidence that respiratory-chain defects caused by mtDNA mutations are clinically actionable.',
+      {
+        sourceRef: 'PMID: 21788663 · Brain 2011',
+        sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/21788663/',
+        detail: 'Klopstock et al., multicenter randomized controlled trial (RHODOS): idebenone, a short-chain quinone electron carrier, bypasses the defective complex I by shuttling electrons directly to complex III; treated patients recovered vision significantly versus placebo. This is the highest-tier literature evidence on the wall (rct) — a clinical-interventional counterpart to the LHON pedigree evidence above (click the PMID to open the paper).',
+        confidence: 0.85, level: 'rct' }],
+    ['demo-e6', 'evidence', 'In vivo causal evidence: mtDNA mutation accumulation suffices to drive premature ageing in mammals',
+      'PolgA proofreading-deficient knock-in mice (the mtDNA mutator mouse) accumulate mtDNA mutations massively and show premature-ageing phenotypes — causal in vivo proof that mtDNA integrity and function are vital.',
+      {
+        sourceRef: 'PMID: 15164064 · Nature 2004',
+        sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/15164064/',
+        detail: 'Trifunovic et al., Nature 2004 — the classic mtDNA mutator mouse: knocking out the PolgA proofreading domain causes massive mtDNA mutation accumulation in vivo, with alopecia, osteoporosis, cardiomyopathy and other premature-ageing phenotypes. A landmark animal-level causal experiment (animal): maintaining a functional mitochondrial genome is a hard requirement for multicellular life (click the PMID to open the paper).',
+        confidence: 0.9, level: 'animal' }],
     ['demo-i1', 'insight', 'Retention is a coupled multi-factor verdict: hydrophobicity locks "who cannot leave"; local regulatory advantage decides "who should not leave"',
       'Synthesizing comparative genomics, the co-translational insertion model and lineage exceptions: hydrophobicity explains "cannot leave", local regulatory advantage explains "not worth leaving" — together they determine retention.',
       {
@@ -126,28 +142,42 @@ export function seedDemoSession(lang: 'zh' | 'en' = 'zh'): string {
         sourceRef: 'PMID: 27135164 · Cell Syst 2016',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/27135164/',
         detail: 'Johnston & Williams 对数百种真核生物做了系统发生控制的比较分析，发现 mtDNA 保留蛋白的疏水性显著高于已成功迁核的同源蛋白——疏水性是基因能否迁核的最强预测因子之一。这是 H1 最系统的定量证据（点击上方 PMID 可打开原文摘要）。',
-        tags: ['比较基因组学'], confidence: 0.9, status: 'strong' }],
+        tags: ['比较基因组学'], confidence: 0.9, status: 'strong', level: 'computational' }],
     ['demo-e2', 'evidence', '线粒体核糖体贴内膜分布，专门翻译 COX1/CYTB 等高度疏水核心亚基',
       '电镜与生化证据显示线粒体核糖体锚定于内膜内表面，专职翻译疏水核心亚基，支持共翻译插入模型。',
       {
         sourceRef: 'PMID: 42660304 · J Struct Biol 2026',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/42660304/',
         detail: '最新结构生物学证据：酵母 Mba1 等因子将线粒体核糖体锚定在内膜内表面，使 COX1/CYTB 等高度疏水亚基在翻译的同时直接插入内膜——"共翻译插入"不再只是模型，而是可见的结构事实（点击 PMID 打开原文）。',
-        confidence: 0.8, status: 'strong' }],
+        confidence: 0.8, status: 'strong', level: 'invitro' }],
     ['demo-e3', 'evidence', '例外：酿酒酵母等谱系已将部分线粒体 tRNA 基因迁入核基因组',
       'tRNA 不涉及膜蛋白疏水性约束，部分谱系成功迁核并依赖 tRNA 输入回运，说明留守并非单一铁律。',
       {
         sourceRef: 'PMID: 10066161 · Science 1999',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/10066161/',
         detail: 'Gray, Burger & Lang 的经典综述（Science 1999）梳理了跨谱系证据：tRNA 等非膜蛋白基因确实存在成功迁核案例，需要通过 tRNA 输入回运维持功能。这说明疏水性约束解释的是"膜蛋白为何留守"，而非全部留守现象——留守是多因素耦合的裁决（点击 PMID 打开原文）。',
-        confidence: 0.75 }],
+        confidence: 0.75, level: 'computational' }],
     ['demo-e4', 'evidence', '核-线粒体表达失衡疾病（如 LHON）显示化学计量调控的临床重要性',
       'LHON 等核-线粒体表达失衡疾病表明亚基化学计量的精细调控具有生理与临床意义。',
       {
         sourceRef: 'PMID: 3201231 · Science 1988',
         sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/3201231/',
         detail: 'Wallace 团队 1988 年在 Science 上首次将 LHON 定位于 mtDNA 突变——单个 mtDNA 编码亚基的缺陷即可导致视神经变性。这从临床角度说明了线粒体编码亚基的表达平衡具有不可替代的生理分量，支撑 H2 的"化学计量调控"论点（点击 PMID 打开原文）。',
-        confidence: 0.7 }],
+        confidence: 0.7, level: 'cohort' }],
+    ['demo-e5', 'evidence', '随机对照试验：idebenone 改善 LHON 患者视功能（绕过缺陷呼吸链的电子旁路）',
+      'RHODOS 试验（85 例 LHON，随机双盲安慰剂对照）显示 idebenone 组最佳矫正视力显著改善且耐受良好——mtDNA 突变所致呼吸链缺陷可被临床干预，RCT 级证据。',
+      {
+        sourceRef: 'PMID: 21788663 · Brain 2011',
+        sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/21788663/',
+        detail: 'Klopstock 等的多中心随机对照试验（RHODOS）：idebenone 作为短链醌类电子载体，可绕过缺陷的复合体 I 将电子直接递给复合体 III；治疗组视力较安慰剂组显著恢复。这是本证据墙上等级最高的文献证据（rct）——与上方 LHON 家系证据构成临床观察↔临床干预的对照（点击 PMID 打开原文）。',
+        confidence: 0.85, level: 'rct' }],
+    ['demo-e6', 'evidence', '体内因果证据：mtDNA 突变累积足以在哺乳动物中驱动早衰表型',
+      'PolgA 校读域敲入小鼠（mtDNA mutator mouse）体内大量累积 mtDNA 突变并出现早衰表型——因果性地证明 mtDNA 完整性与功能对多细胞生物是硬需求。',
+      {
+        sourceRef: 'PMID: 15164064 · Nature 2004',
+        sourceUrl: 'https://pubmed.ncbi.nlm.nih.gov/15164064/',
+        detail: 'Trifunovic 等在 Nature 2004 报道的经典 mtDNA mutator 小鼠：敲除 PolgA 校读结构域后突变在小鼠体内大量累积，出现脱发、骨质疏松、心肌病等早衰表型——动物因果实验（animal）的标志性证据：维持一个功能完好的线粒体基因组是多细胞生命的硬需求（点击 PMID 打开原文）。',
+        confidence: 0.9, level: 'animal' }],
     ['demo-i1', 'insight', '留守是多因素耦合裁决：疏水性锁死"谁不能走"，局部调控优势决定"谁不值得走"',
       '综合比较基因组学、共翻译插入模型与谱系例外：疏水性约束解释"不能走"，局部调控优势解释"不值得走"，两者耦合决定留守。',
       {
@@ -182,13 +212,15 @@ export function seedDemoSession(lang: 'zh' | 'en' = 'zh'): string {
     insertNode(sid, { id: nid(id), kind, title, content, pinnedBy: 'agent', ...extra })
   }
 
-  // ---- 边（15） ----
+  // ---- 边（17） ----
   const edges: [string, string, string][] = [
     ['demo-e1', 'demo-h1', 'supports'],
     ['demo-e2', 'demo-h1', 'supports'],
     ['demo-e2', 'demo-h2', 'supports'],
     ['demo-e4', 'demo-h2', 'supports'],
     ['demo-e3', 'demo-h1', 'contradicts'],
+    ['demo-e5', 'demo-q1', 'relates'],
+    ['demo-e6', 'demo-q1', 'relates'],
     ['demo-h1', 'demo-q1', 'answers'],
     ['demo-h2', 'demo-q1', 'answers'],
     ['demo-h3', 'demo-q1', 'answers'],
@@ -212,7 +244,7 @@ Roughly 2 billion years ago, an endosymbiosis let an α-proteobacterium take up 
 - **The hydrophobicity rule**: cross-eukaryotic comparison shows mtDNA-encoded proteins are on average far more hydrophobic than homologs that successfully relocated [PMID: 27135164]. Highly hydrophobic substrates can barely pass through the TOM/TIM import channel — the foundation of H1.
 - **Translate where you insert**: mitochondrial ribosomes line the inner membrane, dedicated to translating the core hydrophobic OXPHOS subunits (COX1, CYTB…), coupling translation to insertion [co-translational insertion model]. This explains the other half of "why they must stay".
 - **Exceptions are clues**: yeasts and other lineages have relocated part of their mitochondrial tRNAs to the nucleus — the hydrophobicity constraint does not bind RNA, so retention is not a single iron law but a coupled, multi-factor verdict.
-- **Clinical echo**: nuclear–mitochondrial expression imbalance diseases (e.g. LHON) hint at the physiological weight of stoichiometric control.
+- **Clinical echo**: nuclear–mitochondrial expression imbalance diseases (e.g. LHON) hint at the physiological weight of stoichiometric control [cohort, PMID: 3201231]; the idebenone RCT in LHON adds an interventional clinical counterpart [rct, PMID: 21788663], while the mtDNA mutator mouse causally proves in vivo that mtDNA integrity is vital [animal, PMID: 15164064].
 
 ## Reasoning
 H1 (hydrophobicity constraint) has the thickest evidence, yet it cannot explain the retention of non-membrane-protein genes or cross-lineage variation; H2 (co-translational/stoichiometric control) complements rather than excludes H1. The strongest current picture: **hydrophobicity decides which genes cannot leave; local regulatory advantage decides which genes are not worth moving — two locks engaging at once**. H3 remains thinly evidenced.
@@ -229,7 +261,7 @@ Within a cross-lineage comparative-genomics framework, quantify the relative con
 - **疏水性铁律**：跨真核生物的比较分析显示，mtDNA 编码蛋白的平均疏水性显著高于已成功迁核的同源基因 [PMID: 27135164]。高度疏水的底物几乎无法穿过 TOM/TIM 输入通道——这是 H1 的地基。
 - **就近翻译**：线粒体核糖体贴近内膜排布，专职翻译 OXPHOS 复合体的核心疏水亚基（COX1、CYTB 等），实现翻译-插入耦联 [共翻译插入模型]。这解释了"为什么必须留"的另一半。
 - **例外即线索**：酵母等谱系已把部分线粒体 tRNA 迁入核基因组——疏水性约束对 RNA 并不成立，说明留守不是单一铁律，而是多因素耦合的裁决。
-- **临床回声**：核-线粒体基因表达失衡疾病（如 LHON）提示化学计量调控的生理分量。
+- **临床回声**：核-线粒体基因表达失衡疾病（如 LHON）提示化学计量调控的生理分量 [cohort，PMID: 3201231]；idebenone 治疗 LHON 的随机对照试验给出临床干预层面的呼应 [rct，PMID: 21788663]；mtDNA mutator 小鼠则体内因果性地证明 mtDNA 完整性关乎个体健康 [animal，PMID: 15164064]。
 
 ## 推演
 H1（疏水性约束）证据最厚，但解释不了非膜蛋白基因的留守与跨谱系差异；H2（共翻译/化学计量调控）与 H1 互补而非互斥。目前最强的画面是：**疏水性决定了"哪些基因不能走"，局部调控优势决定了"哪些基因不值得走"——两把锁同时咬合**。H3 证据尚薄。

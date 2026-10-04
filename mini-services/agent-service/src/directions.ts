@@ -15,7 +15,7 @@ import {
   type ResearchDirections,
   type ResearchDirection,
 } from './db'
-import { llmJson } from './llm'
+import { llmJsonSteady } from './llm'
 import { DIRECTIONS_PROMPT } from './prompts'
 import { getSessionLang, langDirective, noticeFor } from './lang'
 
@@ -197,7 +197,20 @@ export async function generateDirections(sessionId: string): Promise<{ ok: boole
     const started = Date.now()
     try {
       insertActivity(sessionId, { type: 'notice', summary: noticeFor(lang, 'reviewStart') })
-      const out = await llmJson(DIRECTIONS_PROMPT, briefing, undefined, { face: 'synthesizer' })
+      // Task 20：外层耐心重试——llm() 内部 429 退避耗尽（限流持续 >3.5 分钟）时不再静默失败
+      const out = await llmJsonSteady(DIRECTIONS_PROMPT, briefing, {
+        face: 'synthesizer',
+        onRetry: (i, wait, err) => {
+          insertActivity(sessionId, {
+            type: 'notice',
+            ok: false,
+            summary:
+              lang === 'en'
+                ? `Directions failed (${err.slice(0, 60)}) — API rate-limited/unavailable, retry ${i}/2 in ${Math.round(wait / 1000)}s`
+                : `深研方向生成受阻（${err.slice(0, 60)}）——API 限流/暂不可用，${Math.round(wait / 1000)}s 后自动重试（第 ${i}/2 次）`,
+          })
+        },
+      })
       if (!out.ok) throw new Error(out.error)
       const dirs = normalizeDirections(out.value)
       if (!dirs.directions.length) throw new Error('模型未返回有效的深研方向')

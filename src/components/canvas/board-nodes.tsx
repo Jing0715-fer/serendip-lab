@@ -23,9 +23,9 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { fmt, NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
+import { EVIDENCE_LEVEL_LABEL, fmt, NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
 import { useStudio } from '@/store/studio';
-import type { BoardNode, NodeKind } from '@/lib/types';
+import type { BoardNode, EvidenceLevel, NodeKind } from '@/lib/types';
 
 /** 节点 data：把 BoardNode 整体塞进 React Flow 的 data，外加 live/dimmed/hit 标记
  *  dimmed/hit（Task 17）：搜索时未命中卡压暗、命中卡高亮 */
@@ -68,6 +68,17 @@ export const KIND_COLOR: Record<NodeKind, string> = {
   source: '#eceae4',
   gap: '#fffdf6',
   topic: '#d97706',
+};
+
+/** 六档证据等级主题色（Task 20）：等级筛选 chip 色点用；与 .ev-level--{level} 徽章同色相
+ *  user 紫 / rct 翠绿（最高文献等级）/ cohort 青 / animal 琥珀 / invitro 橙 / computational 灰 */
+export const EVIDENCE_LEVEL_COLOR: Record<EvidenceLevel, string> = {
+  user: '#8b5cf6',
+  rct: '#10b981',
+  cohort: '#14b8a6',
+  animal: '#f59e0b',
+  invitro: '#f97316',
+  computational: '#78716c',
 };
 
 function CardBase({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
@@ -145,6 +156,12 @@ function CardBase({ id, data, selected }: NodeProps<EvidenceFlowNode>) {
         </div>
 
         <footer className="ev-card__meta">
+          {/* 证据等级徽章（Task 20）：调查员钉证据时标注的研究类型等级；未定级（null/老数据）不显示 */}
+          {data.level && kind === 'evidence' && (
+            <span className={`ev-level ev-level--${data.level}`} title={EVIDENCE_LEVEL_LABEL[data.level][lang]}>
+              {EVIDENCE_LEVEL_LABEL[data.level][lang]}
+            </span>
+          )}
           {data.sourceRef ? <span className="ev-chip">{data.sourceRef}</span> : null}
           {data.confidence != null && (
             <span className={cn('ev-conf', contradicted && 'ev-conf--warn')}>

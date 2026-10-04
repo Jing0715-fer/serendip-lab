@@ -19,6 +19,7 @@ import {
   Plus,
   Settings2,
   Square,
+  Star,
   Sun,
   Trash2,
 } from 'lucide-react';
@@ -38,6 +39,7 @@ import { LlmSettingsDialog } from './llm-settings-dialog';
 import { useStudio, isAgentWorking, fmtElapsed } from '@/store/studio';
 import { EDGE_RELATION_LABEL, NODE_KIND_LABEL, PHASE_LABEL, fmt, localeOf, useI18n, useT, type TKey } from '@/lib/i18n';
 import { buildBibTeX, collectBibEntries, downloadBibTeX } from '@/lib/bibtex';
+import { asciiFilenameStem } from '@/lib/utils';
 import type { AgentStatus } from '@/lib/types';
 
 function statusTone(status: AgentStatus | undefined): string {
@@ -273,25 +275,28 @@ export function TopBar() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Serendip-${session.title.slice(0, 24)}.md`;
+    // 文件名 ASCII 化（Task 20）：中文标题在部分系统/工具链有风险，全非 ASCII 时兑底日期串
+    a.download = `Serendip_${asciiFilenameStem(session.title)}.md`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success(t('export.downloaded'));
   }
 
-  /* BibTeX 文献库导出（Task 17 新功能）：墙上文献源 → .bib，可导入文献管理器 */
-  function exportBib() {
+  /* BibTeX 导出（Task 17 / Task 20）：starredOnly=true 时仅导出加星文献卡（.bib 精读清单） */
+  function exportBib(starredOnly = false) {
     if (!session) return;
-    const entries = collectBibEntries(nodes);
+    const pool = starredOnly ? nodes.filter((n) => n.starred) : nodes;
+    const entries = collectBibEntries(pool);
     if (entries.length === 0) {
-      toast.info(t('export.bibEmpty'));
+      toast.info(t(starredOnly ? 'export.bibStarEmpty' : 'export.bibEmpty'));
       return;
     }
+    const stem = asciiFilenameStem(session.title);
     const content = buildBibTeX(entries, {
-      title: `${session.title} · ${t('export.bibItem')}`,
+      title: `${session.title} · ${t(starredOnly ? 'export.bibStarItem' : 'export.bibItem')}`,
       date: new Date().toLocaleString(localeOf(lang), { hour12: false }),
     });
-    downloadBibTeX(content, `Serendip-${session.title.slice(0, 24)}.bib`);
+    downloadBibTeX(content, starredOnly ? `Serendip_${stem}_starred.bib` : `Serendip_${stem}.bib`);
     toast.success(fmt(t('export.bibDownloaded'), { n: entries.length }));
   }
 
@@ -475,11 +480,18 @@ export function TopBar() {
                 <span className="block text-[10.5px] leading-snug text-stone-400">{t('export.mdItemDesc')}</span>
               </span>
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={exportBib} className="gap-2.5 py-2.5">
+            <DropdownMenuItem onClick={() => exportBib()} className="gap-2.5 py-2.5">
               <BookMarked size={15} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
               <span className="min-w-0">
                 <span className="block text-[13px] font-medium">{t('export.bibItem')}</span>
                 <span className="block text-[10.5px] leading-snug text-stone-400">{t('export.bibItemDesc')}</span>
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => exportBib(true)} className="gap-2.5 py-2.5">
+              <Star size={15} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
+              <span className="min-w-0">
+                <span className="block text-[13px] font-medium">{t('export.bibStarItem')}</span>
+                <span className="block text-[10.5px] leading-snug text-stone-400">{t('export.bibStarItemDesc')}</span>
               </span>
             </DropdownMenuItem>
           </DropdownMenuContent>

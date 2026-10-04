@@ -34,6 +34,11 @@ export type EdgeRelation =
   | 'derives'
   | 'answers';
 
+/** 证据等级（Task 20）：调查员钉证据时标注的研究类型等级
+ *  user 用户一手数据 > rct 临床RCT > cohort 队列研究 > animal 动物因果
+ *  > invitro 体外/细胞 > computational 计算推断；null = 未定级（老数据不显示徽章） */
+export type EvidenceLevel = 'user' | 'rct' | 'cohort' | 'animal' | 'invitro' | 'computational';
+
 export type BoardNode = {
   id: string;
   kind: NodeKind;
@@ -44,6 +49,8 @@ export type BoardNode = {
   tags: string[];
   sourceUrl: string | null;
   sourceRef: string | null;
+  /** 证据等级：仅 evidence 卡使用；null/缺省 = 未定级 */
+  level: EvidenceLevel | null;
   confidence: number | null;
   starred: boolean;
   pinnedBy: 'agent' | 'user';

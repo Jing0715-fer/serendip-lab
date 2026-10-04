@@ -75,6 +75,7 @@ export function noticeFor(lang: Lang, key: NoticeKey, params: Record<string, str
       'Demo project loaded — click “Continue Research” to let the agent build on it, or start your own project',
     ],
     investigatingStart: ['开始自主研究', 'Autonomous research started'],
+    resynthesizeStart: ['按当前证据墙重新梳理综述…', 'Re-synthesizing the review from the current wall…'],
     autoResearchArmed: [
       '✅ 需求已经足够清晰——{sec} 秒后我将自动开始自主信息收集与科学逻辑梳理（继续发言可细化需求，研究中可随时补充素材或暂停）',
       '✅ Enough context gathered — autonomous research starts in {sec}s (keep typing to refine; you can add notes or pause anytime once it begins)',
@@ -133,6 +134,7 @@ export type NoticeKey =
   | 'userNotePrefix'
   | 'demoLoaded'
   | 'investigatingStart'
+  | 'resynthesizeStart'
   | 'autoResearchArmed'
   | 'autoResearchArmedShort'
   | 'autoResearchStart'

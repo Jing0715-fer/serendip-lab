@@ -67,6 +67,12 @@ type StudioState = {
   exploreNodeId: string | null;
   exploreOpen: boolean;
 
+  // ---- 反馈续研飞轮 / 综述重梳理（Task 20） ----
+  /** 探索反馈推导出的下一轮聚焦点：预填进续研对话框后立即消费置 null */
+  researchPreset: string | null;
+  /** 综述重梳理进行中（POST resynthesize 已受理，等待 SSE phase(done)） */
+  resyncBusy: boolean;
+
   // ---- 瞬态 ----
   connected: boolean;
   bootstrapping: boolean;
@@ -100,6 +106,10 @@ type StudioState = {
   generateExplorePlan: (nodeId: string) => Promise<void>;
   regenerateExplorePlan: (nodeId: string) => Promise<void>;
   submitExploreFeedback: (nodeId: string, text: string) => Promise<void>;
+  /** 反馈续研飞轮（Task 20）：把探索课题+反馈推导写入聚焦点并打开续研对话框 */
+  setResearchPreset: (focus: string | null) => void;
+  /** 综述重梳理（Task 20）：按当前证据墙重新生成研究综述 */
+  resynthesize: () => Promise<void>;
   applyEvent: (ev: AgentEvent) => void;
   setConnected: (v: boolean) => void;
   openInspector: (nodeId: string | null) => void;
@@ -164,6 +174,8 @@ export const useStudio = create<StudioState>((set, get) => ({
   exploreBusy: {},
   exploreNodeId: null,
   exploreOpen: false,
+  researchPreset: null,
+  resyncBusy: false,
 
   connected: false,
   bootstrapping: false,
@@ -223,6 +235,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         exploreBusy: {},
         interviewBusy: false,
         liveIds: [],
+        // 防串会话：切换会话时清掉上一会话的续研预填
+        researchPreset: null,
       });
     } finally {
       set({ loadingSession: false });
@@ -395,6 +409,49 @@ export const useStudio = create<StudioState>((set, get) => ({
   openExplore: (nodeId) => set({ exploreNodeId: nodeId, exploreOpen: true }),
   setExploreOpen: (v) => set({ exploreOpen: v }),
 
+  // ---------- 反馈续研飞轮 / 综述重梳理（Task 20） ----------
+
+  setResearchPreset: (focus) =>
+    set(
+      // 非空：预填并打开续研对话框、合上探索面板；
+      // 置空（对话框消费预填 / 启动成功后清理）：只清 preset，不动 researchDialogOpen，
+      // 否则「打开对话框 → useEffect 消费 preset」会被立即打回 false（实测出现过）。
+      focus != null
+        ? { researchPreset: focus, researchDialogOpen: true, exploreOpen: false }
+        : { researchPreset: null }
+    ),
+
+  // 综述重梳理：POST 立即返回，后端走一轮 synthesizing → SSE phase/state 事件带回新综述
+  resynthesize: async () => {
+    const s = get();
+    if (!s.session || s.resyncBusy) return;
+    if (isAgentWorking(s.session.status)) return; // 研究进行中不打断
+    if (s.nodes.length === 0) return; // 没证据可梳理（按钮层已守卫）
+    const sid = s.session.id;
+    set({ resyncBusy: true });
+    try {
+      await agentApi.resynthesize(sid, currentLang());
+    } catch (e) {
+      set({ resyncBusy: false });
+      toast.error(
+        currentLang() === 'zh'
+          ? `重梳理启动失败：${e instanceof Error ? e.message : String(e)}`
+          : `Failed to start re-synthesis: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return;
+    }
+    // SSE 掉线兑底：200s 后仍未收到 phase(done) → 拉全量恢复并解锁
+    setTimeout(() => {
+      const cur = useStudio.getState();
+      if (cur.session?.id === sid && cur.resyncBusy) {
+        void cur
+          .loadSession(sid)
+          .then(() => useStudio.setState({ resyncBusy: false }))
+          .catch(() => useStudio.setState({ resyncBusy: false }));
+      }
+    }, 200000);
+  },
+
   generateExplorePlan: async (nodeId) => {
     const s = get();
     if (!s.session || s.exploreBusy[nodeId]) return;
@@ -553,6 +610,15 @@ export const useStudio = create<StudioState>((set, get) => ({
         ) {
           set({ toolRunning: null, interviewBusy: false });
         }
+        // 综述重梳理完成（Task 20）：phase(done) 到达 → 解锁 + 提示（narrative 由后续 state 快照带回）
+        if (s.resyncBusy && ev.status === 'done') {
+          set({ resyncBusy: false });
+          toast.success(
+            currentLang() === 'zh'
+              ? '综述已按最新证据墙重新梳理'
+              : 'Review re-synthesized from the latest wall'
+          );
+        }
         break;
       }
       case 'thought': {
@@ -637,7 +703,7 @@ export const useStudio = create<StudioState>((set, get) => ({
         // 探索任务失败也会广播 error → 同步清 busy，避免按钮永久锁死
         const busy = { ...s.exploreBusy };
         for (const k of Object.keys(busy)) delete busy[k];
-        set({ toolRunning: null, interviewBusy: false, directionsBusy: false, exploreBusy: busy });
+        set({ toolRunning: null, interviewBusy: false, directionsBusy: false, exploreBusy: busy, resyncBusy: false });
         if (ev.message) {
           toast.error(ev.message);
         }

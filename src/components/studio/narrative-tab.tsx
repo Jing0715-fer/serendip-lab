@@ -1,12 +1,13 @@
 'use client';
 
 // narrative-tab.tsx — 研究综述（markdown）+ 研究计划进度 + 深研方向 CTA（Task 13 双语）
+// Task 20：综述重梳理 —— 证据墙变化后（steer/素材/反馈）可按当前墙上内容重新生成综述
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CheckCircle2, Circle, Compass, ScrollText, Sparkles } from 'lucide-react';
+import { CheckCircle2, Circle, Compass, Loader2, RefreshCw, ScrollText, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useStudio } from '@/store/studio';
+import { useStudio, isAgentWorking } from '@/store/studio';
 import { fmt, useT } from '@/lib/i18n';
 
 export function NarrativeTab() {
@@ -14,9 +15,15 @@ export function NarrativeTab() {
   const plan = useStudio((s) => s.plan);
   const directions = useStudio((s) => s.directions);
   const directionsBusy = useStudio((s) => s.directionsBusy);
+  const session = useStudio((s) => s.session);
+  const nodes = useStudio((s) => s.nodes);
+  const resyncBusy = useStudio((s) => s.resyncBusy);
+  const resynthesize = useStudio((s) => s.resynthesize);
   const setWorkspaceTab = useStudio((s) => s.setWorkspaceTab);
   const generateDirections = useStudio((s) => s.generateDirections);
   const t = useT();
+
+  const working = isAgentWorking(session?.status);
 
   return (
     <div className="studio-scroll h-full overflow-y-auto bg-[#f7f4ee] px-4 py-4 dark:bg-[#171411] sm:px-6">
@@ -72,6 +79,22 @@ export function NarrativeTab() {
 
       {/* 研究综述 */}
       <section>
+        {/* 重梳理操作条（Task 20）：有综述且 Agent 闲时可用；重梳理进行中保持可见展示 busy 态 */}
+        {narrative && (!working || resyncBusy) && (
+          <div className="mx-auto mb-3 flex max-w-[720px] items-center justify-end">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={resyncBusy || nodes.length < 1}
+              title={t('narrative.resyncHint')}
+              onClick={() => void resynthesize()}
+              className="h-7 gap-1 border-stone-300 bg-white/70 text-[12px] dark:border-stone-700 dark:bg-stone-800/70"
+            >
+              {resyncBusy ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              {resyncBusy ? t('narrative.resyncBusy') : t('narrative.resync')}
+            </Button>
+          </div>
+        )}
         {narrative ? (
           <article className="case-brief mx-auto max-w-[720px]">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{narrative}</ReactMarkdown>

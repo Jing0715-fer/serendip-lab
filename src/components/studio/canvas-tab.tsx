@@ -2,17 +2,18 @@
 
 // canvas-tab.tsx — 证据墙标签页：EvidenceBoard + 添加素材 + 节点检视
 // Task 13 双语 → Task 14 一键整理 → Task 17 卡片搜索（命中高亮/未命中压暗）+ 类型筛选
+// Task 20：证据等级筛选（第二组 chip，只作用于带等级的 evidence 卡，允许全部隐藏）
 import dynamic from 'next/dynamic';
 import { useMemo, useState } from 'react';
 import { LayoutGrid, MapPin, Microscope, Plus, RotateCcw, Search, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStudio } from '@/store/studio';
-import { fmt, NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
-import type { NodeKind } from '@/lib/types';
+import { EVIDENCE_LEVEL_LABEL, fmt, NODE_KIND_LABEL, useI18n, useT } from '@/lib/i18n';
+import type { EvidenceLevel, NodeKind } from '@/lib/types';
 import { AddClueDialog } from './add-clue-dialog';
 import { NodeInspector } from './node-inspector';
-import { KIND_COLOR } from '@/components/canvas/board-nodes';
+import { EVIDENCE_LEVEL_COLOR, KIND_COLOR } from '@/components/canvas/board-nodes';
 import { nodeMatchesSearch } from '@/components/canvas/node-search';
 
 const EvidenceBoard = dynamic(
@@ -70,6 +71,41 @@ function KindChip({
   );
 }
 
+/** 证据等级筛选 chip（Task 20）：等级色点 + 等级名，仅作用于带等级的 evidence 卡 */
+function LevelChip({
+  level,
+  hidden,
+  onToggle,
+}: {
+  level: EvidenceLevel;
+  hidden: boolean;
+  onToggle: () => void;
+}) {
+  const lang = useI18n((s) => s.lang);
+  const t = useT();
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      title={t('canvas.levelFilterHint')}
+      aria-pressed={!hidden}
+      className={cn(
+        'flex h-6 shrink-0 items-center gap-1.5 rounded-full border px-2 text-[10.5px] font-medium transition-all',
+        hidden
+          ? 'border-dashed border-stone-300/70 bg-transparent text-stone-400 opacity-55 dark:border-stone-600/70 dark:text-stone-500'
+          : 'border-stone-400/70 bg-white/80 text-stone-700 shadow-sm hover:border-[#a3450f]/50 dark:border-stone-500/70 dark:bg-stone-800/80 dark:text-stone-200 dark:hover:border-amber-500/50'
+      )}
+    >
+      <span
+        className="h-2 w-2 rounded-full border border-stone-500/30"
+        style={{ background: hidden ? 'transparent' : EVIDENCE_LEVEL_COLOR[level] }}
+        aria-hidden="true"
+      />
+      {EVIDENCE_LEVEL_LABEL[level][lang]}
+    </button>
+  );
+}
+
 export function CanvasTab() {
   const nodes = useStudio((s) => s.nodes);
   const edges = useStudio((s) => s.edges);
@@ -80,15 +116,25 @@ export function CanvasTab() {
   const t = useT();
   const [organizeTick, setOrganizeTick] = useState(0);
 
-  // 搜索 + 类型筛选（Task 17）：与 EvidenceBoard 共用 nodeMatchesSearch 命中真源
+  // 搜索 + 类型/等级筛选（Task 17 / Task 20）：与 EvidenceBoard 共用 nodeMatchesSearch 命中真源
   const [search, setSearch] = useState('');
   const [hiddenKinds, setHiddenKinds] = useState<ReadonlySet<NodeKind>>(() => new Set());
+  const [hiddenLevels, setHiddenLevels] = useState<ReadonlySet<EvidenceLevel>>(() => new Set());
   const q = search.trim();
 
   // 只为墙上实际存在的类型出 chip
   const presentKinds = useMemo(() => {
     const seen = new Set(nodes.map((n) => n.kind));
     return (Object.keys(NODE_KIND_LABEL) as NodeKind[]).filter((k) => seen.has(k));
+  }, [nodes]);
+
+  // 只为墙上 evidence 卡实际出现过的等级出 chip（Task 20）
+  const presentLevels = useMemo(() => {
+    const seen = new Set<EvidenceLevel>();
+    for (const n of nodes) {
+      if (n.kind === 'evidence' && n.level) seen.add(n.level);
+    }
+    return (Object.keys(EVIDENCE_LEVEL_LABEL) as EvidenceLevel[]).filter((l) => seen.has(l));
   }, [nodes]);
 
   const hits = useMemo(
@@ -103,6 +149,16 @@ export function CanvasTab() {
       else next.add(k);
       // 不允许把所有类型都藏掉（画布不能清空）
       if (next.size >= presentKinds.length) return prev;
+      return next;
+    });
+  }
+
+  function toggleLevel(l: EvidenceLevel) {
+    // 等级筛选允许全部隐藏（其他类型卡不受影响），无需 kind 那种守卫
+    setHiddenLevels((prev) => {
+      const next = new Set(prev);
+      if (next.has(l)) next.delete(l);
+      else next.add(l);
       return next;
     });
   }
@@ -196,10 +252,33 @@ export function CanvasTab() {
                 onToggle={() => toggleKind(k)}
               />
             ))}
-            {hiddenKinds.size > 0 && (
+            {/* 证据等级第二组 chip（Task 20）：与类型 chip 同一行的后半段，竖线分隔 */}
+            {presentLevels.length > 0 && (
+              <>
+                <span
+                  className="mx-1 hidden h-4 w-px shrink-0 bg-stone-300/70 sm:block dark:bg-stone-600/70"
+                  aria-hidden="true"
+                />
+                <span className="hidden shrink-0 text-[10px] font-semibold uppercase tracking-wider text-stone-400 lg:inline">
+                  {t('canvas.levelLabel')}
+                </span>
+                {presentLevels.map((l) => (
+                  <LevelChip
+                    key={l}
+                    level={l}
+                    hidden={hiddenLevels.has(l)}
+                    onToggle={() => toggleLevel(l)}
+                  />
+                ))}
+              </>
+            )}
+            {(hiddenKinds.size > 0 || hiddenLevels.size > 0) && (
               <button
                 type="button"
-                onClick={() => setHiddenKinds(new Set())}
+                onClick={() => {
+                  setHiddenKinds(new Set());
+                  setHiddenLevels(new Set());
+                }}
                 title={t('canvas.filterReset')}
                 aria-label={t('canvas.filterReset')}
                 className="flex h-6 shrink-0 items-center gap-1 rounded-full border border-[#a3450f]/40 bg-[#fdf3d7]/70 px-2 text-[10.5px] font-medium text-[#8a380c] transition-colors hover:bg-[#fdf3d7] dark:border-amber-500/40 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/70"
@@ -237,6 +316,7 @@ export function CanvasTab() {
             organizeSignal={organizeTick}
             search={search}
             hiddenKinds={hiddenKinds}
+            hiddenLevels={hiddenLevels}
           />
         )}
       </div>

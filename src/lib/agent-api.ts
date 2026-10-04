@@ -147,6 +147,12 @@ export const agentApi = {
       method: 'POST',
       json: { nodeId, action: 'regenerate', lang },
     }),
+
+  // ---------- 综述重梳理（Task 20）：按当前证据墙重新生成研究综述 ----------
+
+  /** 409 agent_busy / 400 no_evidence 由调用方 catch 处理；结果经 SSE phase/state 事件带回 */
+  resynthesize: (id: string, lang?: 'zh' | 'en') =>
+    api<{ ok: boolean }>(`/sessions/${id}/resynthesize`, { method: 'POST', json: { lang } }),
 };
 
 export function sseUrl(sessionId: string): string {

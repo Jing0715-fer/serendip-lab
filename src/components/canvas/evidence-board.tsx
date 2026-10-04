@@ -28,6 +28,7 @@ import type {
   BoardEdge,
   BoardNode,
   EdgeRelation,
+  EvidenceLevel,
   NodeKind,
 } from '@/lib/types';
 
@@ -48,6 +49,8 @@ export type EvidenceBoardProps = {
   search?: string;
   /** 隐藏的卡片类型集合（空/未传 = 全部显示）；连线随端点自动隐藏 */
   hiddenKinds?: ReadonlySet<NodeKind>;
+  /** 隐藏的证据等级集合（Task 20）：仅作用于带等级的 evidence 卡，允许全部隐藏 */
+  hiddenLevels?: ReadonlySet<EvidenceLevel>;
   className?: string;
 };
 
@@ -183,6 +186,7 @@ function EvidenceBoardInner({
   organizeSignal,
   search,
   hiddenKinds,
+  hiddenLevels,
 }: EvidenceBoardProps) {
   const t = useT();
   // position 为 null 的节点用 dagre 布局兜底
@@ -193,14 +197,19 @@ function EvidenceBoardInner({
   const q = (search ?? '').trim();
   const matchOf = useCallback((n: BoardNode) => nodeMatchesSearch(n, q), [q]);
 
-  // 类型筛选：被隐藏类型的卡片 hidden；连线端点任一隐藏则连线隐藏
+  // 类型 / 等级筛选：被隐藏类型的卡片 hidden；带隐藏等级的 evidence 卡 hidden；连线端点任一隐藏则连线隐藏
   const hiddenIdSet = useMemo(() => {
     const s = new Set<string>();
     if (hiddenKinds && hiddenKinds.size > 0) {
       for (const n of nodes) if (hiddenKinds.has(n.kind)) s.add(n.id);
     }
+    if (hiddenLevels && hiddenLevels.size > 0) {
+      for (const n of nodes) {
+        if (n.kind === 'evidence' && n.level && hiddenLevels.has(n.level)) s.add(n.id);
+      }
+    }
     return s;
-  }, [nodes, hiddenKinds]);
+  }, [nodes, hiddenKinds, hiddenLevels]);
 
   const rfNodes = useMemo<EvidenceFlowNode[]>(
     () =>
