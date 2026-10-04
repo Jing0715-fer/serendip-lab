@@ -65,12 +65,31 @@ function bibEscape(raw: string): string {
     .replace(/\s*\n\s*/g, ' ');
 }
 
-/** 标题 → cite key：取前几个「有分量」的词（去掉纯符号/数字/停用词），snake_case + 序号兜底唯一 */
-function keyOf(title: string, index: number): string {
+/** 标识符值 → ASCII 安全片段：非字母数字压成下划线，截断长度 */
+function asciiStem(raw: string, max = 40): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, max);
+}
+
+/**
+ * 标题/标识符 → ASCII 安全的 cite key（兼容经典 LaTeX/BibTeX 工具链，非 ASCII 字符会导致编译失败）：
+ *  1) 有文献标识 → serendip_pmid_37673907 / serendip_doi_10_1038_xxx（同标识已去重，天然唯一）
+ *  2) 否则取标题前几个「有分量」的 ASCII 词（中文等非 ASCII 字符直接丢弃）snake_case
+ *  3) 兜底 serendip_source_N
+ *  注：非 ASCII（如中文标题）可能过滤后无词 → 兜底序号键，保证永不为空、永不非法
+ */
+function keyOf(title: string, index: number, identifier: BibEntry['identifier']): string {
+  if (identifier) {
+    const stem = asciiStem(identifier.value) || 'id';
+    return `serendip_${identifier.type}_${stem}`;
+  }
   const stop = new Set(['the', 'a', 'an', 'of', 'and', 'or', 'in', 'on', 'for', 'to', 'with', 'is', 'are']);
   const words = title
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .replace(/[^a-z0-9\s-]/g, ' ')
     .split(/\s+/)
     .filter((w) => w.length >= 2 && !stop.has(w))
     .slice(0, 3)
@@ -113,7 +132,18 @@ export function collectBibEntries(nodes: BoardNode[]): BibEntry[] {
     });
   }
 
-  return entries.map((e, i) => ({ ...e, key: keyOf(e.title, i) }));
+  // 键生成 + 唯一性保障：标识符键理论上唯一（同标识已去重），但保险起见碰撞时追加序号
+  const usedKeys = new Set<string>();
+  return entries.map((e, i) => {
+    let key = keyOf(e.title, i, e.identifier);
+    if (usedKeys.has(key)) {
+      let n = 2;
+      while (usedKeys.has(`${key}_${n}`)) n++;
+      key = `${key}_${n}`;
+    }
+    usedKeys.add(key);
+    return { ...e, key };
+  });
 }
 
 /** 条目 → BibTeX 源码块 */
