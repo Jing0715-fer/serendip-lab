@@ -66,8 +66,16 @@ export function noticeFor(lang: Lang, key: NoticeKey, params: Record<string, str
     ],
     directionsFailed: ['深研方向生成失败', 'Research path distillation failed'],
     finalSynthesisNote: [
-      '这是本轮研究的最终综述（本轮即将结束），continue 请置 false。',
-      'This is the final synthesis of this run — set continue to false.',
+      '这是本轮研究的最终综述（本轮即将结束），continue 请置 false。若上方列有「未完成任务」，必须在「未解之谜」与「下一步建议」中点名这些未覆盖的方向及尚缺的证据类型，供用户决策是否追加研究。',
+      'This is the final synthesis of this run — set continue to false. If any “unfinished tasks” are listed above, name them (and the missing evidence types) under “Open Questions” and “Next Steps” so the user can decide whether to extend the research.',
+    ],
+    budgetTight: [
+      '⏳ 预算紧张，进入收敛模式：压缩单任务步数，优先完成核心任务',
+      '⏳ Budget running low — switching to convergence mode: fewer steps per task, core tasks first',
+    ],
+    budgetLeftover: [
+      '研究预算已用尽，{n} 个任务未能执行：{tasks}……这些方向将在最终综述的「下一步建议」中点名',
+      'Budget exhausted with {n} task(s) left unrun: {tasks}… These will be flagged in the final review’s “Next Steps”',
     ],
     userNotePrefix: ['【用户手动添加素材】', '[User-added card]'],
     demoLoaded: [
@@ -131,6 +139,8 @@ export type NoticeKey =
   | 'directionsChatPrefix'
   | 'directionsFailed'
   | 'finalSynthesisNote'
+  | 'budgetTight'
+  | 'budgetLeftover'
   | 'userNotePrefix'
   | 'demoLoaded'
   | 'investigatingStart'

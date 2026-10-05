@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ESNext"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["bun-types"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["index.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", "data", "../../examples", "../../skills"]
+}

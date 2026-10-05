@@ -109,6 +109,10 @@ async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise
   }
 }
 
+/** z-ai 网关补全返回结构：SDK d.ts 将 create 声明为 Promise<any>，经 withTimeout 泛型推断为 unknown，
+ *  此处按 OpenAI 兼容 choices 形态断言收窄（choices 恒为数组，可能为空） */
+type ChatCompletionLike = { choices: { message?: { content?: string } }[] }
+
 /** 底层单次调用（按配置分流） */
 async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts): Promise<string> {
   const s = getLlmSettings()
@@ -118,7 +122,7 @@ async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts)
   // builtin：z-ai 网关（系统提示按 SDK 约定走 assistant 角色）
   // P1 修复：SDK 默认超时可达 10 分钟，叠加退避会把整轮 Agent 循环挂死 → 与 custom 通道同标准的硬超时
   const z = await getZai()
-  const completion = await withTimeout(
+  const completion = (await withTimeout(
     z.chat.completions.create({
       messages: [
         { role: 'assistant', content: systemPrompt },
@@ -129,7 +133,7 @@ async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts)
     }),
     150_000,
     'LLM 请求超时'
-  )
+  )) as ChatCompletionLike
   return completion.choices[0]?.message?.content ?? ''
 }
 

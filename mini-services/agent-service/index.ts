@@ -134,7 +134,7 @@ async function handleResearch(id: string, request: Request) {
   const maxMinutes = clamp(Math.round(Number(body.maxMinutes) || 15), 1, 240)
 
   const existing = AgentRuntime.find(id)
-  if (existing?.running && !existing.paused) return errJson('agent_busy', 409)
+  if (existing?.running && !existing.isPaused()) return errJson('agent_busy', 409)
 
   // 已暂停的旧循环 → stop 收尾后自动开启新一轮（异步，不阻塞响应）
   void (async () => {
@@ -176,11 +176,11 @@ function handleControl(id: string, body: any) {
       rt?.pause()
       return json({ ok: true })
     case 'resume': {
-      if (rt?.running && rt.paused) {
+      if (rt?.running && rt.isPaused()) {
         rt.resume()
         return json({ ok: true })
       }
-      if (rt?.running && !rt.paused) return errJson('agent_not_paused', 400)
+      if (rt?.running && !rt.isPaused()) return errJson('agent_not_paused', 400)
       // runtime 已丢失（进程重启/热重载）但 DB 仍是 paused → 等效于再次启动调查（planner 续查已有证据墙）
       const row = getSessionRow(id)
       if (row && (row.status === 'paused' || row.status === 'interrupted')) {

@@ -45,6 +45,9 @@ export const PLANNER_PROMPT = `# 角色
 # 原则
 - 牢记最终目标：从证据与矛盾中提炼出数个值得深入研究的科学课题。任务安排应服务于这一目标——覆盖矛盾、补足证据、探索缺口。
 - 每轮 3-5 个任务，每个任务目标单一明确：验证某个假说 / 补足某类证据 / 探索某个矛盾 / 摸底某个空白。
+- 视角覆盖（硬约束）：计划必须至少覆盖三类不同取向——① 正向：验证假说、梳理主流证据链；② 反向：寻找对立证据、矛盾、失败案例、反面数据；③ 外推：跨物种 / 跨模型 / 体外→体内 / 动物→临床等情境外推（与主题相关时）。同向任务不得超过一半。首轮研究尤其要防止单一假说锚定整个计划。
+- 聚焦点是切入角度而非研究边界：聚焦点提示从哪里切入，但任务应覆盖领域（用户画像 topic）的关键侧面，不要只在聚焦点字面范围内打转。
+- 预算收敛：剩余预算紧张（少于 10 步或 5 分钟）时只规划 1-2 个任务，聚焦当前证据链的最大缺口（如某假说尚无独立来源支撑、某矛盾未交叉验证），不再铺开新方向。
 - 排查优先级：① 与核心问题直接相关的经典与前沿文献；② 相互矛盾的证据（矛盾处藏真相）；③ 尚无证据覆盖的空白；④ 跨库交叉验证（文献↔基因↔蛋白↔结构）。
 - 检索词以英文为主（生物数据库英文检索效果更好），每个任务 2-4 个角度不同的查询。
 - 不与已完成的任务重复（已执行任务清单会提供）。
@@ -58,6 +61,7 @@ export const PLANNER_PROMPT = `# 角色
 export function buildInvestigatorPrompt(p: {
   goal: string
   why: string
+  globalContext?: string
   wallSummary: string
   narrative: string
   steering: string
@@ -71,8 +75,10 @@ export function buildInvestigatorPrompt(p: {
 你是 Serendip 的文献调研员，正在执行一项具体研究任务。你通过 ReAct 循环（思考→行动→观察）逼近答案，一步一步建立起扎实的证据链。
 
 # 当前任务
-${p.goal} —— ${p.why}
-
+${p.goal} —— ${p.why}`)
+  if (p.globalContext) sections.push(`# 本轮研究的核心问题与假说（已由规划师与访谈用户提供，当前任务围绕它们展开——不要向用户询问这些已知信息）
+${p.globalContext}`)
+  sections.push(`
 # 证据墙现状
 ${p.wallSummary}`)
   if (p.narrative) sections.push(`# 当前研究综述（若有）
@@ -93,7 +99,8 @@ ${p.toolsDoc}
 - 每条 evidence 类卡片必须标注 level 证据等级：user(用户一手数据)/rct(临床RCT)/cohort(队列·临床观察)/animal(动物因果实验)/invitro(体外·细胞)/computational(计算·相关推断)。依据来源的研究类型如实分级，宁可降级不可虚标。
 - 证据与假说的关系用 link_evidence 建立；relation 取值：supports/contradicts/relates/derives/answers。
 - 发现文献间矛盾或未解现象 → note_gap。
-- 需要只有用户知道的信息（ta 的数据、背景约束）→ ask_user（研究会暂停等待）。
+- 需要只有用户知道的一手信息（ta 的实验数据、队列观察、资源约束）→ ask_user（研究会暂停等待）；研究假说与背景已在上下文提供，禁止就已知信息发问。
+- 落墙是任务的一部分：检索到的关键文献事实应随查随落（add_evidence，含 level 分级与 detail 解释），不要把落墙堆积到任务最后；负面发现（找不到预期证据、结果与假说相反）也要 note_gap 或 add_evidence 落墙——它们同样是证据。
 - 工具返回空或报错：换检索词重试，最多换 2 次，不要原地打转。
 - 本任务最多 8 步；信息足够即 finish_task，summary 写清：获得了什么证据、支持/动摇了什么假说、留下什么疑问。
 - 不要连续调用相同工具+相同参数。

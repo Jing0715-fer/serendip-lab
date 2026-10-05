@@ -10,6 +10,7 @@ import {
   getSessionRow, getMeta, listNodes, listEdges, insertActivity, insertMessage,
   touchSession, insertNode, updateNode, updateNodeContent, insertEdge, findNodeByTitle,
   saveExploration, getExploration, deleteExploration, NODE_KINDS, EDGE_RELATIONS,
+  normalizeNodeStatus,
   type BoardNode, type TopicPlan, type FeedbackRound, type Exploration, type ExploreVerdict,
 } from './db'
 import { llmJsonSteady } from './llm'
@@ -257,7 +258,7 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
         updateNode(sessionId, node.id, {
           confidence: patch.confidence != null ? Math.min(1, Math.max(0, Number(patch.confidence))) : undefined,
           content: patch.content != null ? String(patch.content) : undefined,
-          status: patch.status != null ? String(patch.status) : undefined,
+          status: normalizeNodeStatus(patch.status) ?? undefined,
           tags: Array.isArray(patch.tags) ? patch.tags.map(String) : undefined,
         })
         applied.push(L(lang, `调整「${node.title}」（置信度/状态）`, `Adjusted “${node.title}” (confidence/status)`))

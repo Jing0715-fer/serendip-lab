@@ -318,12 +318,13 @@ export const useStudio = create<StudioState>((set, get) => ({
   control: async (action) => {
     const s = get();
     if (!s.session) return;
-    await agentApi.control(s.session.id, action);
+    const sessionId = s.session.id;
+    await agentApi.control(sessionId, action);
     // phase/status 变化经 SSE phase 事件到达；1.2s 后兜底刷新
     setTimeout(() => {
       const cur = useStudio.getState();
-      if (cur.session?.id === s.session.id) {
-        void cur.loadSession(cur.session.id).catch(() => undefined);
+      if (cur.session?.id === sessionId) {
+        void cur.loadSession(sessionId).catch(() => undefined);
       }
     }, 1200);
   },

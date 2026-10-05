@@ -6,6 +6,7 @@ import {
   insertMessage, insertActivity, updateSessionFields, getSessionRow,
   findNodeByTitle, insertNode, updateNode, updateNodeContent, insertEdge,
   replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS, EVIDENCE_LEVELS,
+  normalizeNodeStatus,
   type SessionPhase, type AgentStatus, type Plan, type PlanTask,
   type BoardNode, type ChatMessage, type ResearchQuestion, type EvidenceLevel,
 } from './db'
@@ -128,6 +129,8 @@ export class AgentRuntime {
   steeringQueue: string[] = []
   /** 访谈 ready 后的自动开研究定时器（新用户消息可打断取消） */
   private autoStartTimer: ReturnType<typeof setTimeout> | null = null
+  /** 预算紧张收敛模式已提示（每轮研究重置，避免活动日志刷屏） */
+  private tightNotified = false
 
   constructor(sessionId: string) {
     this.sessionId = sessionId
@@ -210,6 +213,13 @@ export class AgentRuntime {
     return `${Math.max(0, b.maxSteps - b.stepsUsed)} 步 / ${Math.max(0, Math.round((b.maxMinutes * 60_000 - elapsed) / 60_000))} 分钟`
   }
 
+  /** 预算紧张（剩余步数 < 6 或剩余时间 < 4 分钟）→ 收敛模式：压缩单任务步数，避免末尾任务把预算烧光还留不下任何成果 */
+  private budgetTight(): boolean {
+    const b = getBudget(this.sessionId)
+    const elapsed = b.startedAt ? now() - b.startedAt : b.elapsedMs
+    return b.maxSteps - b.stepsUsed < 6 || b.maxMinutes * 60_000 - elapsed < 4 * 60_000
+  }
+
   private persistStep() {
     // checkpoint：预算 + 计划（任务 done 状态）落库，然后广播全量 state
     const b = getBudget(this.sessionId)
@@ -221,6 +231,11 @@ export class AgentRuntime {
   }
 
   // ---------- 控制 ----------
+  /** 路由层读取暂停态（paused 为私有字段，不外露） */
+  isPaused(): boolean {
+    return this.paused
+  }
+
   pause() {
     if (!this.running) return
     this.paused = true
@@ -284,6 +299,7 @@ export class AgentRuntime {
     this.stopFlag = false
     this.paused = false
     this.consecutiveFails = 0
+    this.tightNotified = false
 
     const b = getBudget(this.sessionId)
     saveBudget(this.sessionId, {
@@ -375,6 +391,12 @@ export class AgentRuntime {
         continue
       }
 
+      // 预算紧张 → 收敛模式（每轮仅提示一次）：压缩后续单任务步数，优先把核心任务带过终点线
+      if (!this.tightNotified && this.budgetTight()) {
+        this.tightNotified = true
+        insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), 'budgetTight') })
+      }
+
       const stepsBefore = getBudget(this.sessionId).stepsUsed
       await this.investigate(task)
       tasksSinceSynth++
@@ -399,7 +421,21 @@ export class AgentRuntime {
     }
 
     if (this.stopFlag) return 'stopped'
-    return this.budgetOK() ? 'completed' : 'budget'
+    if (!this.budgetOK()) {
+      // 预算耗尽透明收官：未完成任务点名到活动日志，供用户决策追加研究（飞轮入口）
+      const undone = plan.tasks.filter((t) => !t.done)
+      if (undone.length) {
+        insertActivity(this.sessionId, {
+          type: 'notice',
+          summary: noticeFor(getSessionLang(this.sessionId), 'budgetLeftover', {
+            n: undone.length,
+            tasks: undone.map((t) => oneLine(t.goal, 60)).slice(0, 3).join('；'),
+          }),
+        })
+      }
+      return 'budget'
+    }
+    return 'completed'
   }
 
   // ---------- 访谈就绪 → 自动开启自主调研（Task 14 新流程） ----------
@@ -447,13 +483,17 @@ export class AgentRuntime {
     }, AUTO_START_DELAY_MS)
   }
 
-  // ---------- 调查内循环（ReAct，每任务最多 8 步） ----------
+  // ---------- 调查内循环（ReAct，每任务最多 8 步；预算紧张时压缩到 5 步） ----------
   private async investigate(task: PlanTask) {
     this.setPhase('investigating', 'running')
     const scratchpad: ScratchEntry[] = []
     let parseFails = 0
     let llmFails = 0
-    for (let step = 0; step < 8; step++) {
+    const stepCap = this.budgetTight() ? 5 : 8
+    // 落墙守护（P1）：任务开始时的 evidence 卡数基准——finish 时若零新增且有检索成果，给一次抢救机会
+    const evBefore = listNodes(this.sessionId).filter((n) => n.kind === 'evidence').length
+    let rescueUsed = false
+    for (let step = 0; step < stepCap; step++) {
       if (!this.budgetOK() || this.stopFlag) break
       await this.waitIfPaused()
       if (this.stopFlag) break
@@ -508,6 +548,20 @@ export class AgentRuntime {
       const args = a.args || {}
 
       if (toolName === 'finish_task') {
+        // 落墙守护：检索到了成果但一张卡都没落就收官 → 注入系统指令给一次补落机会（每任务仅一次）
+        if (!rescueUsed && this.needsEvidenceRescue(evBefore, scratchpad)) {
+          rescueUsed = true
+          scratchpad.push({
+            thought: '任务收尾自检：证据墙未新增任何卡片',
+            action: { tool: 'finish_task', args: {} },
+            observation:
+              'SYSTEM: 等一下——本任务的研究历史中已有可信检索结果，但证据墙尚未新增任何 evidence 卡。预算耗尽后未落墙的成果将全部丢失。请立即改用 add_evidence 把已确认的关键事实（含 PMID/DOI 来源、level 证据等级、detail 两句解释）落到证据墙（2-4 张），完成后再 finish_task。',
+          })
+          insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+            '落墙守护：检索成果尚未上墙，已要求补落证据卡后再收官',
+            'Evidence-pin guard: retrieved results not yet pinned — asked to add evidence cards before closing') })
+          continue
+        }
         task.done = true
         task.summary = String(args.summary || '').slice(0, 400)
         this.persistTask(task)
@@ -541,6 +595,16 @@ export class AgentRuntime {
       task.done = true
       this.persistTask(task)
     }
+  }
+
+  /** 落墙守护判定：全程零新增 evidence 卡 + scratchpad 里有真实检索成果 + 预算还够补落（≥3 步） */
+  private needsEvidenceRescue(evBefore: number, scratchpad: ScratchEntry[]): boolean {
+    const evNow = listNodes(this.sessionId).filter((n) => n.kind === 'evidence').length
+    if (evNow > evBefore) return false
+    if (!this.budgetOK()) return false
+    const b = getBudget(this.sessionId)
+    if (b.maxSteps - b.stepsUsed < 3) return false
+    return scratchpad.some((s) => /pubmed_|europepmc_|openalex_|web_read|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || '')))
   }
 
   /** 把内存中 task 的 done/summary 合并回 DB 的 plan（checkpoint） */
@@ -685,7 +749,7 @@ export class AgentRuntime {
     updateNode(this.sessionId, node.id, {
       confidence: patch.confidence != null ? clamp(Number(patch.confidence), 0, 1) : undefined,
       content: patch.content != null ? String(patch.content) : undefined,
-      status: patch.status != null ? String(patch.status) : undefined,
+      status: normalizeNodeStatus(patch.status) ?? undefined,
       tags: Array.isArray(patch.tags) ? patch.tags.map(String) : undefined,
       level:
         patch.level !== undefined
@@ -781,7 +845,7 @@ export class AgentRuntime {
       : '【已完成任务】无'
 
     const focusBlock = focus
-      ? `【本轮用户指定聚焦点】${focus}`
+      ? `【本轮聚焦点】${focus}\n【领域范围】${s.topic || s.organism || '见用户画像'} —— 聚焦点是切入角度而非边界：任务应覆盖领域关键侧面（机制 / 对立证据 / 情境外推 / 方法学），不要只在聚焦点字面范围内打转`
       : prevPlan?.focusQuestion
         ? `【上轮聚焦问题】${prevPlan.focusQuestion}`
         : ''
@@ -860,9 +924,18 @@ export class AgentRuntime {
   > {
     const row = getSessionRow(this.sessionId)
     const b = getBudget(this.sessionId)
+    // 全局假说上下文（P2 修复：investigator 曾因看不到假说而过早 ask_user 询问已知信息）
+    const planForCtx = getPlan(this.sessionId)
+    const globalContext = planForCtx
+      ? [
+          `核心问题：${planForCtx.focusQuestion || '（未定）'}`,
+          ...(planForCtx.hypotheses || []).map((h) => `- ${h.title}${h.basis ? `（依据: ${h.basis}）` : ''}`),
+        ].join('\n')
+      : undefined
     const systemPrompt = buildInvestigatorPrompt({
       goal: task.goal,
       why: task.why,
+      globalContext,
       wallSummary: wallSummary(this.sessionId).slice(0, 3000),
       narrative: row?.narrative || '',
       steering: this.steeringBlock(),
@@ -892,6 +965,7 @@ export class AgentRuntime {
     const titleOf = (id: string) => nodes.find((n) => n.id === id)?.title || id
 
     const doneTasks = (plan?.tasks || []).filter((t) => t.done)
+    const undoneTasks = (plan?.tasks || []).filter((t) => !t.done)
     const steers = listMessages(this.sessionId).filter((m) => m.kind === 'steer').slice(-10)
 
     const userPrompt = [
@@ -900,6 +974,9 @@ export class AgentRuntime {
       `【证据节点】\n${nodes.map((n) => `- [${n.kind}]${n.level ? ` [${n.level}]` : ''} ${n.title}: ${n.content}${n.sourceRef ? ` [${n.sourceRef}]` : n.sourceUrl ? ` [${n.sourceUrl}]` : ''}${n.confidence != null ? ` (置信度 ${n.confidence})` : ''}`).join('\n') || '（无）'}`,
       `【证据关系】\n${edges.map((e) => `- ${titleOf(e.source)} --${e.relation}--> ${titleOf(e.target)}`).join('\n') || '（无）'}`,
       `【已完成任务小结】\n${doneTasks.map((t) => `- ${t.goal} → ${t.summary || '（无小结）'}`).join('\n') || '（无）'}`,
+      ...(final && undoneTasks.length
+        ? [`【未完成任务（预算耗尽或中断，这些方向尚无证据覆盖）】\n${undoneTasks.map((t) => `- ${t.goal}（${t.why || '未说明原因'}）`).join('\n')}`]
+        : []),
       `【研究期间用户的补充消息】\n${steers.map((m) => `- ${m.content.slice(0, 300)}`).join('\n') || '（无）'}`,
       final
         ? noticeFor(getSessionLang(this.sessionId), 'finalSynthesisNote')

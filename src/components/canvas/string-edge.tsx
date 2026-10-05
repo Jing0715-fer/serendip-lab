@@ -66,7 +66,8 @@ type Box = { x: number; y: number; w: number; h: number };
 
 /** 从 React Flow 内部节点解析包围盒；measured 未就绪时用把手包围盒兜底 */
 function nodeBox(internal: ReturnType<typeof useInternalNode>): Box | null {
-  const node = internal?.node;
+  // React Flow v12：useInternalNode 直接返回 InternalNode（measured/internals 就在其上，无 .node 包装）
+  const node = internal;
   if (!node) return null;
   const pos = node.internals.positionAbsolute;
   let w = node.measured?.width;

@@ -27,6 +27,8 @@ export type BoardNode = {
   kind: NodeKind
   title: string
   content: string
+  /** 详细说明（卡片点击展开的深度解读，Task 11）：null/缺省 = 无 */
+  detail?: string | null
   tags: string[]
   sourceUrl: string | null
   sourceRef: string | null
@@ -130,6 +132,18 @@ export type Exploration = {
   rounds: FeedbackRound[]
 }
 
+export type PlanTask = {
+  id: string
+  goal: string
+  why: string
+  queries: string[]
+  toolsHint: string[]
+  expectedEvidence: string
+  done: boolean
+  /** finish_task 时写入的完成小结 */
+  summary?: string
+}
+
 export type Plan = {
   round: number
   focusQuestion: string
@@ -205,6 +219,13 @@ export type SessionFull = {
 export const NODE_KINDS: NodeKind[] = ['question', 'hypothesis', 'evidence', 'insight', 'source', 'gap', 'topic']
 export const EDGE_RELATIONS: EdgeRelation[] = ['supports', 'contradicts', 'relates', 'derives', 'answers']
 export const EVIDENCE_LEVELS: EvidenceLevel[] = ['user', 'rct', 'cohort', 'animal', 'invitro', 'computational']
+export const NODE_STATUSES: BoardNode['status'][] = ['new', 'strong', 'weak', 'contradicted']
+
+/** 归一化卡片状态：合法四值原样返回；非法/缺省返回 null（调用方以 ?? undefined 跳过落库） */
+export function normalizeNodeStatus(v: unknown): BoardNode['status'] | null {
+  const s = String(v ?? '').trim()
+  return (NODE_STATUSES as string[]).includes(s) ? (s as BoardNode['status']) : null
+}
 
 // ---------- 数据库初始化 ----------
 const DATA_DIR = join(process.cwd(), 'data')
@@ -321,7 +342,8 @@ db.exec(
 type SessionRow = {
   id: string; title: string; phase: string; status: string
   meta: string; plan: string | null; narrative: string; budget: string
-  directions: string | null
+  /** 深研方向 JSON（Task 12 列迁移后 SELECT * 恒有；createSession 构造时缺省 = NULL） */
+  directions?: string | null
   created_at: number; updated_at: number
 }
 type MessageRow = {

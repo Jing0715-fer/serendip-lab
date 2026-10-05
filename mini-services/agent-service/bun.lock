@@ -7,9 +7,18 @@
       "dependencies": {
         "z-ai-web-dev-sdk": "^0.0.18",
       },
+      "devDependencies": {
+        "bun-types": "^1.4.2",
+      },
     },
   },
   "packages": {
+    "@types/node": ["@types/node@26.6.4", "", { "dependencies": { "undici-types": "~8.9.0" } }, "sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg=="],
+
+    "bun-types": ["bun-types@1.4.2", "", { "dependencies": { "@types/node": "*" } }, "sha512-bxV1FgK7yBIzjRe5zBozIM4Bem11ZJcCXSrjWRG3YWLt8yFDePu4cLjpebO8OvPeIE9trbyPF4fuj3Cia4Fj3w=="],
+
+    "undici-types": ["undici-types@8.9.0", "", {}, "sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg=="],
+
     "z-ai-web-dev-sdk": ["z-ai-web-dev-sdk@0.0.18", "", { "bin": { "z-ai": "dist/cli.js", "z-ai-generate": "dist/cli.js" } }, "sha512-xVoZIEME2F+/Z06orHCgUKzOMuFPhoHuzN4ZFZqcD71g11nzbzq2jKSP53igi3lJFE8ZbMB4WKb4gp6lCGrMXQ=="],
   }
 }
