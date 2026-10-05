@@ -11,7 +11,7 @@ import {
   type BoardNode, type ChatMessage, type ResearchQuestion, type EvidenceLevel,
 } from './db'
 import { llmJson } from './llm'
-import { INTERVIEWER_PROMPT, PLANNER_PROMPT, SYNTHESIZER_PROMPT, buildInvestigatorPrompt } from './prompts'
+import { INTERVIEWER_PROMPT, PLANNER_PROMPT, SYNTHESIZER_PROMPT, CONTRADICTS_PROMPT, buildInvestigatorPrompt } from './prompts'
 import { getSessionLang, langDirective, noticeFor, type Lang } from './lang'
 import { findExternalTool, toolsDoc } from './tools'
 import { uuid, now, truncObs, oneLine, clamp, sleep } from './util'
@@ -35,6 +35,22 @@ const DEFAULT_SESSION_TITLES = ['新调查', '新课题', 'New Project']
 function normalizeLevel(v: unknown): EvidenceLevel | null {
   const s = String(v ?? '').trim().toLowerCase()
   return (EVIDENCE_LEVELS as string[]).includes(s) ? (s as EvidenceLevel) : null
+}
+
+// ---------- 证据等级合理性校验（Task 22 P1-2：关键词 vs 等级交叉验证，保守降级） ----------
+// 目标：拦截「临床前小鼠研究被标 cohort」这类虚标。规则保守：仅在文本含强跨域标记
+// 且完全无人体/临床试验标记时降级；user/computational 不参与（无法从文本判型）。
+const PRECLINICAL_RE = /临床前|preclinical|小鼠|\bmouse\b|\bmice\b|murine|C57BL|BALB|裸鼠|鼠模型|异种移植|xenograft|\bPDX\b/i
+const INVITRO_RE = /细胞系|cell lines?\b|in vitro|体外培养|培养细胞|2D 培养|3D 培养|类器官|organoids?\b/i
+const HUMAN_RE = /患者|patient|受试者|参与者|志愿者|队列|cohort|前瞻性|回顾性|prospective|retrospective|临床试验|clinical trial|\btrial\b|随机|randomi[sz]ed|安慰剂|placebo|人群|人体|人类|流行病学|epidemiolog|孟德尔|Mendelian|全基因组关联|\bGWAS\b/i
+
+function sanityCheckLevel(level: EvidenceLevel | null, title: string, content: string): EvidenceLevel | null {
+  if (!level || level === 'user' || level === 'computational') return level
+  const text = `${title} ${content}`
+  if (HUMAN_RE.test(text)) return level // 含人体研究标记 → 不动，宁可漏纠不可误纠
+  if ((level === 'rct' || level === 'cohort') && PRECLINICAL_RE.test(text)) return 'animal'
+  if ((level === 'rct' || level === 'cohort' || level === 'animal') && INVITRO_RE.test(text) && !PRECLINICAL_RE.test(text)) return 'invitro'
+  return level
 }
 
 type ScratchEntry = { thought: string; action: { tool: string; args: any }; observation: string }
@@ -334,6 +350,8 @@ export class AgentRuntime {
     } catch (e) {
       console.error('[final-synthesize]', e)
     }
+    // 矛盾猎手兜底：最终综合后若墙上零 contradicts 边且综述提及矛盾 → 定向结构化（失败不阻断收官）
+    await this.ensureContradictionEdges()
     this.setPhase('done', 'done')
     const runLang = getSessionLang(this.sessionId)
     const summary = synth?.message_to_user || (runLang === 'en' ? 'This research run has ended.' : '本轮研究结束。')
@@ -356,6 +374,7 @@ export class AgentRuntime {
     try {
       insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), 'resynthesizeStart') })
       await this.callSynthesizer(true)
+      await this.ensureContradictionEdges()
       this.setPhase('done', 'done')
       this.emitState()
       return { ok: true }
@@ -493,10 +512,28 @@ export class AgentRuntime {
     // 落墙守护（P1）：任务开始时的 evidence 卡数基准——finish 时若零新增且有检索成果，给一次抢救机会
     const evBefore = listNodes(this.sessionId).filter((n) => n.kind === 'evidence').length
     let rescueUsed = false
-    for (let step = 0; step < stepCap; step++) {
+    // Task 22：主步数用尽后追加 ≤3 轮补落窗口（仅在检索成果尚未落墙时开启，落墙即止）
+    for (let step = 0; step < stepCap + 3; step++) {
       if (!this.budgetOK() || this.stopFlag) break
       await this.waitIfPaused()
       if (this.stopFlag) break
+
+      // 步数上限落墙守护：主窗口结束仍零落墙且有检索成果 → 注入系统指令引导补落（每任务仅注入一次）
+      if (step >= stepCap) {
+        if (!this.needsEvidenceRescue(evBefore, scratchpad)) break
+        if (!rescueUsed) {
+          rescueUsed = true
+          insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+            '落墙守护：步数达到上限但检索成果尚未上墙，追加补落窗口（≤3 步）',
+            'Evidence-pin guard: step cap reached with unpinned results — extending a pinning window (≤3 steps)') })
+          scratchpad.push({
+            thought: '步数达到上限，任务收尾自检：证据墙未新增卡片',
+            action: { tool: '__step_cap__', args: {} },
+            observation:
+              'SYSTEM: 步数已达上限。本任务检索到的关键事实尚未落到证据墙——请立即用 add_evidence 把已确认的关键事实落墙（1-3 张，含 PMID/DOI 来源、level 证据等级、detail 两句解释），随后 finish_task 收尾。不要发起新的检索。',
+          })
+        }
+      }
 
       const out = await this.callInvestigator(task, scratchpad)
       if (!out.ok) {
@@ -672,7 +709,9 @@ export class AgentRuntime {
     const confidence = args.confidence != null ? clamp(Number(args.confidence), 0, 1) : null
     // Task 20 打磨：证据等级只对 evidence/source 卡有意义（研究类型分级），
     // 假说/洞见/课题等语句型卡片不带 level，防止语义泄漏（真实测试发现 hypothesis 被标 animal）
-    const level = kind === 'evidence' || kind === 'source' ? normalizeLevel(args.level) : null
+    // Task 22：归一化后过合理性校验器（保守降级：纯动物/体外文本不得标临床级）
+    const level =
+      kind === 'evidence' || kind === 'source' ? sanityCheckLevel(normalizeLevel(args.level), title, content) : null
 
     // 同 title 节点 → 更新
     const existing = findNodeByTitle(this.sessionId, title)
@@ -754,7 +793,7 @@ export class AgentRuntime {
       level:
         patch.level !== undefined
           ? node.kind === 'evidence' || node.kind === 'source'
-            ? normalizeLevel(patch.level)
+            ? sanityCheckLevel(normalizeLevel(patch.level), node.title, patch.content != null ? String(patch.content) : node.content)
             : null
           : undefined,
     })
@@ -821,6 +860,50 @@ export class AgentRuntime {
     const steers = listMessages(this.sessionId).filter((m) => m.kind === 'steer').slice(-10)
     if (!steers.length) return ''
     return steers.map((m) => `- ${m.content.slice(0, 300)}`).join('\n')
+  }
+
+  /** 矛盾猎手（Task 22 P1-3 兜底）：综述提及矛盾但墙上零 contradicts 边 → 定向 LLM 调用结构化冲突对 */
+  private async ensureContradictionEdges(): Promise<void> {
+    try {
+      const edges = listEdges(this.sessionId)
+      if (edges.some((e) => e.relation === 'contradicts')) return
+      const nodes = listNodes(this.sessionId)
+      const candidates = nodes.filter((n) => n.kind === 'evidence' || n.kind === 'hypothesis' || n.kind === 'insight')
+      if (candidates.length < 2) return
+      const narrative = getSessionRow(this.sessionId)?.narrative || ''
+      if (!/矛盾|冲突|相反|不一致|争议|controvers|contradict|conflict|discrepan/i.test(narrative)) return
+
+      insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+        '🔎 矛盾猎手：综述提到矛盾但证据墙还没有 contradicts 边，正在定向结构化冲突对…',
+        '🔎 Contradiction hunter: the review mentions conflicts but the wall has no contradicts edges yet — structuring pairs…') })
+      const list = candidates
+        .map((n) => `- ${n.title} | ${n.kind}${n.level ? ` | ${n.level}` : ''} | ${n.content.slice(0, 160)}`)
+        .join('\n')
+      const userPrompt = `# 节点清单（title | kind | level | content）\n${list}\n\n# 综述片段（矛盾语境）\n${narrative.slice(0, 1200)}\n\n请找出真实存在的冲突对（宁缺毋滥，最多 3 对）。`
+      const res = await llmJson<any>(CONTRADICTS_PROMPT, userPrompt, () => this.countLlm(), { face: 'synthesizer' })
+      if (!res.ok) {
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId, `矛盾猎手失败: ${res.error.slice(0, 80)}`, `Contradiction hunter failed: ${res.error.slice(0, 80)}`), ok: false })
+        return
+      }
+      const pairs = Array.isArray(res.value?.pairs) ? res.value.pairs.slice(0, 3) : []
+      let linked = 0
+      for (const p of pairs) {
+        const r = this.toolLinkEvidence({ from: String(p.from || ''), to: String(p.to || ''), relation: 'contradicts', label: p.label ? String(p.label) : undefined })
+        if (r && r.ok) linked++
+      }
+      if (linked > 0) {
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+          `已结构化 ${linked} 对矛盾关系（contradicts）——矛盾是课题的种子`,
+          `${linked} contradiction pair(s) structured — contradictions seed research questions`) })
+        this.emitState()
+      } else {
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+          '矛盾猎手未发现可连接的真实冲突对（宁缺毋滥）',
+          'No genuine conflicting pairs found (better none than forced)') })
+      }
+    } catch (e) {
+      console.error('[contradiction-hunter]', e)
+    }
   }
 
   // ---------- 四张面孔 ----------
@@ -891,7 +974,21 @@ export class AgentRuntime {
 
     const j = res.value
     const budget = getBudget(this.sessionId)
-    const rawTasks = Array.isArray(j.tasks) ? j.tasks.slice(0, 5) : []
+    // Task 22 P2：预算收敛代码硬约束——剩余 <10 步或 <5 分钟，或总预算本就小（≤12 步 / ≤8 分钟）时，
+    // 无论 LLM 规划几个任务只保留前 2 个（prompt 已要求收敛，此处兜底强制服从；10 步小预算曾规划 5 任务导致半数未跑即耗尽）
+    const elapsedMs = budget.startedAt ? now() - budget.startedAt : budget.elapsedMs
+    const tightNow =
+      budget.maxSteps - budget.stepsUsed < 10 ||
+      budget.maxSteps <= 12 ||
+      budget.maxMinutes * 60_000 - elapsedMs < 5 * 60_000 ||
+      budget.maxMinutes <= 8
+    const taskLimit = tightNow ? 2 : 5
+    const rawTasks = Array.isArray(j.tasks) ? j.tasks.slice(0, taskLimit) : []
+    if (Array.isArray(j.tasks) && j.tasks.length > taskLimit) {
+      insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+        `预算紧张，计划已收敛至 ${taskLimit} 个核心任务（原规划 ${j.tasks.length} 个）`,
+        `Budget tight — plan narrowed to ${taskLimit} core task(s) (planner proposed ${j.tasks.length})`) })
+    }
     const plan: Plan = {
       round: budget.round,
       focusQuestion: String(j.focus_question || focus || s.topic || '核心问题待定'),

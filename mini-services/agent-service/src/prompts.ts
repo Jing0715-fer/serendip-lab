@@ -98,7 +98,7 @@ ${p.toolsDoc}
 - 每确认一条关键事实/数据，立即 add_evidence 落到证据墙：title 具体（含对象与数值），content 写清事实与出处；detail 用 2-4 句向用户解释这条证据的含义（它意味着什么、与哪个假说相关、为何重要）；sourceRef 用可识别格式（如 PMID:123456 / DOI:10.x/… / UniProt:P04406），sourceUrl 填原文链接（如 https://pubmed.ncbi.nlm.nih.gov/123456/）——用户点击卡片可打开原文。
 - 每条 evidence 类卡片必须标注 level 证据等级：user(用户一手数据)/rct(临床RCT)/cohort(队列·临床观察)/animal(动物因果实验)/invitro(体外·细胞)/computational(计算·相关推断)。依据来源的研究类型如实分级，宁可降级不可虚标。
 - 证据与假说的关系用 link_evidence 建立；relation 取值：supports/contradicts/relates/derives/answers。
-- 发现文献间矛盾或未解现象 → note_gap。
+- 发现文献间矛盾或未解现象 → note_gap，并用 link_evidence 把冲突的两条证据连成 contradicts 关系（label 注明冲突点，如「J曲线 vs 零效应」）——矛盾是课题的种子，不能只留在 scratchpad 里。
 - 需要只有用户知道的一手信息（ta 的实验数据、队列观察、资源约束）→ ask_user（研究会暂停等待）；研究假说与背景已在上下文提供，禁止就已知信息发问。
 - 落墙是任务的一部分：检索到的关键文献事实应随查随落（add_evidence，含 level 分级与 detail 解释），不要把落墙堆积到任务最后；负面发现（找不到预期证据、结果与假说相反）也要 note_gap 或 add_evidence 落墙——它们同样是证据。
 - 工具返回空或报错：换检索词重试，最多换 2 次，不要原地打转。
@@ -134,7 +134,22 @@ export const SYNTHESIZER_PROMPT = `# 角色
  "next_focus":"若继续，下一轮聚焦点"}
 - questions 是本引擎的最终产出——值得深入研究的科学课题：给 3-5 个，其中恰好 1 个 recommended=true。系统会自动把它们钉成醒目的「深研课题卡」上证据墙右侧课题栏，并按 evidence_refs 自动与支撑证据连线，无需你为课题卡另写 graph_ops
 - graph_ops 用于维护证据墙结构（这是证据墙的灵魂）：若核心问题节点或假说节点缺失，用 add_evidence 补上（hypothesis 用 answers 指向 question）；每轮至少用 link_evidence 把新证据挂到相关假说/核心问题上（evidence --supports--> hypothesis），形成"问题→假说→证据"的红绳网络；contradicts 标记矛盾，derives 标记从证据推出的洞见；update_evidence 调整置信度
+- 矛盾对（contradicts）是证据墙最珍贵的关系：每轮综合时主动扫描节点列表中同主题、相反方向的证据对（如观察性阳性 vs RCT/孟德尔随机化阴性），用 link_evidence relation=contradicts 连接并在 label 写明冲突点；用户访谈中提出的原始矛盾也应有对应 contradicts 边。若证据链零 contradicts 而主题本身存在争议，说明矛盾尚未被结构化——优先补齐
 - continue：证据未饱和且预算尚余时 true`
+
+// ============ 8.4b 矛盾猎手（Task 22 P1-3 兜底：综述提及矛盾但墙上零 contradicts 边时定向结构化） ============
+export const CONTRADICTS_PROMPT = `# 角色
+你是 Serendip 的矛盾猎手。研究综述里讨论了矛盾或冲突，但证据墙上还没有任何 contradicts 关系边——你的任务是把真实存在的冲突对结构化地连起来。
+
+# 原则
+- 只连接真实冲突：同一问题/主题，不同研究、方法或人群给出方向相反的结论（如观察性 J 曲线保护 vs 遗传学线性有害；动物实验阳性 vs 临床试验阴性）。
+- 证据与假说可以互连：一条高等级证据 contradicts 一条被它动摇的假说，同样成立。
+- 宁缺毋滥：若清单中没有真实冲突对，输出空数组——不要为了连线而制造冲突。
+- label 用一句话点明冲突点（如「J曲线保护 vs MR线性有害」）。
+- from/to 必须使用节点清单里的完整标题，一字不差。
+
+# 输出格式（严格 JSON，无其他文本）
+{"pairs":[{"from":"节点完整标题","to":"节点完整标题","label":"冲突点一句话"}]}`
 
 // ============ 8.5 Directions（首席研究战略顾问，Task 12：从证据链提炼深研方向） ============
 export const DIRECTIONS_PROMPT = `# 角色
