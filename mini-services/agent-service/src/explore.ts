@@ -16,7 +16,7 @@ import {
 import { llmJsonSteady } from './llm'
 import { EXPLORE_PROMPT, FEEDBACK_PROMPT } from './prompts'
 import { getSessionLang, langDirective, noticeFor, type Lang } from './lang'
-import { stateSnapshot, resolveNodeByTitle } from './runtime'
+import { stateSnapshot, resolveNodeByTitle, normalizeLevel, sanityCheckLevel } from './runtime'
 
 /** sessionId → `${action}:${nodeId}`；同一会话同一时刻只跑一个探索任务 */
 const running = new Map<string, string>()
@@ -214,7 +214,12 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
         const existing = findNodeByTitle(sessionId, title)
         // Task 20 打磨：用户一手实验数据（sourceRef 为 User experiment 等）自动标 user 等级——
         // 反馈链路钉墙的实验数据是最高权重证据，此前漏标 level（真实测试发现）
+        // Task 23 P2：level 语义化——LLM 指定的合法等级（归一化 + sanityCheckLevel 关键词交叉校验）
+        // 直接采纳，不再只依赖 sourceRef 启发式；用户一手数据仍强制 user（最高权重）
         const isUserExp = /user[\s_-]*experiment|用户实验|用户数据|一手数据/i.test(String(op.sourceRef || ''))
+        const level = kind === 'evidence'
+          ? sanityCheckLevel(isUserExp ? 'user' : normalizeLevel(op.level), title, content)
+          : null
         if (existing) {
           updateNodeContent(
             sessionId, existing.id, content,
@@ -222,7 +227,7 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
             op.sourceRef ? String(op.sourceRef) : null,
             op.sourceUrl ? String(op.sourceUrl) : null,
             op.detail ? String(op.detail) : null,
-            kind === 'evidence' && (isUserExp || op.level === 'user') ? 'user' : null
+            level
           )
           applied.push(L(lang, `更新卡片「${title}」`, `Updated card “${title}”`))
         } else {
@@ -232,7 +237,7 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
             sourceRef: op.sourceRef ? String(op.sourceRef) : null,
             sourceUrl: op.sourceUrl ? String(op.sourceUrl) : null,
             confidence: op.confidence != null ? Math.min(1, Math.max(0, Number(op.confidence))) : null,
-            level: kind === 'evidence' && (isUserExp || op.level === 'user') ? 'user' : null,
+            level,
             pinnedBy: 'agent',
           })
           applied.push(L(lang, `钉上新卡片「${title}」`, `Pinned new card “${title}”`))

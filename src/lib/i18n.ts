@@ -179,6 +179,16 @@ const DICT = {
   'narrative.resyncBusy': ['正在重新梳理综述…', 'Re-synthesizing the review…'],
   'narrative.resyncDone': ['综述已按最新证据墙重新梳理', 'Review re-synthesized from the latest wall'],
 
+  /* 延迟收官横幅（Task 23：最终综述因配额受限未完成 → 可自动/手动补齐） */
+  'narrative.pendingTitle': ['最终综述尚未完成', 'The final review is incomplete'],
+  'narrative.pendingBody': [
+    '上一轮研究收官时模型服务受限（如配额耗尽），最终综述未能生成。已自动重试 {n} 次，配额恢复后系统会继续自动补收官，也可以现在手动补齐。',
+    'The model service was limited (e.g. quota exhausted) when the last research run wrapped up, so the final review was not generated. Auto-retried {n} time(s); the system will keep finalizing once the service recovers — or finalize it now.',
+  ],
+  'narrative.finalizeButton': ['立即补收官', 'Finalize now'],
+  'narrative.finalizeBusy': ['正在补收官…', 'Finalizing…'],
+  'narrative.finalizeDone': ['补收官完成：最终综述已补齐', 'Finalization done: the final review is ready'],
+
   /* 问题清单标签页 */
   'question.novelty': ['新颖性', 'Novelty'],
   'question.feasibility': ['可行性', 'Feasibility'],

@@ -202,6 +202,8 @@ export type SessionSummary = {
   updatedAt: number
   counts: { messages: number; nodes: number; edges: number; questions: number }
   hasNarrative: boolean
+  /** 延迟收官标记（Task 23）：最终综合因配额/服务受限未完成，等待自动/手动补收官 */
+  hasPendingFinal: boolean
 }
 
 export type SessionFull = {
@@ -213,6 +215,19 @@ export type SessionFull = {
   updatedAt: number
   ready: boolean
   budget: { maxSteps: number; maxMinutes: number }
+  pendingFinal: PendingFinalState | null
+}
+
+/** 延迟收官状态（Task 23）：最终综合失败后持久化，后台 sweeper 按退避自动重试 */
+export type PendingFinalState = {
+  /** 首次失败时间（epoch ms） */
+  since: number
+  /** 已自动尝试次数 */
+  attempts: number
+  /** 上次尝试时间（epoch ms；缺省=since） */
+  lastAttemptAt?: number
+  /** 最近一次失败摘要（限长） */
+  error: string
 }
 
 // topic：综合分析师提炼出的「值得深入研究的科学课题」卡（Task 14 新流程，醒目钉在证据墙课题栏）
@@ -324,6 +339,17 @@ try {
   console.error('[db] migrate nodes.level failed:', e)
 }
 
+// 轻量迁移：老库补 sessions.pending_final 列（延迟收官，Task 23）
+try {
+  const cols = db.query('PRAGMA table_info(sessions)').all() as { name: string }[]
+  if (!cols.some((c) => c.name === 'pending_final')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN pending_final TEXT')
+    console.log('[db] migrated: sessions.pending_final added')
+  }
+} catch (e) {
+  console.error('[db] migrate sessions.pending_final failed:', e)
+}
+
 // 语义清理（幂等）：证据等级只属于 evidence/source 卡；上线初期（真实测试发现）
 // hypothesis/topic/gap 曾被透传 level → 每次启动清一次非证据卡的残留等级
 try {
@@ -344,6 +370,8 @@ type SessionRow = {
   meta: string; plan: string | null; narrative: string; budget: string
   /** 深研方向 JSON（Task 12 列迁移后 SELECT * 恒有；createSession 构造时缺省 = NULL） */
   directions?: string | null
+  /** 延迟收官 JSON（Task 23 列迁移后 SELECT * 恒有；NULL = 无待补收官） */
+  pending_final?: string | null
   created_at: number; updated_at: number
 }
 type MessageRow = {
@@ -477,7 +505,7 @@ export function touchSession(id: string) {
   db.run(`UPDATE sessions SET updated_at=? WHERE id=?`, [now(), id])
 }
 
-export function updateSessionFields(id: string, fields: Partial<{ title: string; phase: string; status: string; meta: string; plan: string | null; narrative: string; budget: string; directions: string | null }>) {
+export function updateSessionFields(id: string, fields: Partial<{ title: string; phase: string; status: string; meta: string; plan: string | null; narrative: string; budget: string; directions: string | null; pending_final: string | null }>) {
   const keys = Object.keys(fields)
   if (!keys.length) return
   const setSql = keys.map((k) => `${k}=?`).join(',')
@@ -542,6 +570,29 @@ export function saveDirections(id: string, d: ResearchDirections) {
   updateSessionFields(id, { directions: JSON.stringify(d) })
 }
 
+// ---------- 延迟收官（Task 23）：最终综合失败 → 持久化等待补收官 ----------
+
+export function getPendingFinal(id: string): PendingFinalState | null {
+  const r = getSessionRow(id)
+  if (!r || !r.pending_final) return null
+  try {
+    const v = JSON.parse(r.pending_final) as PendingFinalState
+    if (typeof v?.since !== 'number') return null
+    return { since: v.since, attempts: Math.max(0, Math.round(Number(v.attempts) || 0)), lastAttemptAt: typeof v.lastAttemptAt === 'number' ? v.lastAttemptAt : undefined, error: String(v.error || '').slice(0, 200) }
+  } catch {
+    return null
+  }
+}
+
+export function savePendingFinal(id: string, state: PendingFinalState | null) {
+  updateSessionFields(id, { pending_final: state ? JSON.stringify(state) : null })
+}
+
+/** sweeper 扫描用：所有有待补收官的会话（不含状态解析） */
+export function listPendingFinalSessions(): { id: string; pending_final: string | null }[] {
+  return (db.query('SELECT id, pending_final FROM sessions WHERE pending_final IS NOT NULL').all() as { id: string; pending_final: string | null }[])
+}
+
 export function mapSessionFull(r: SessionRow): SessionFull & { narrative: string } {
   const meta = (() => { try { return { ...defaultMeta(), ...JSON.parse(r.meta) } } catch { return defaultMeta() } })()
   const budget = (() => { try { return { ...defaultBudget(), ...JSON.parse(r.budget) } } catch { return defaultBudget() } })()
@@ -555,6 +606,7 @@ export function mapSessionFull(r: SessionRow): SessionFull & { narrative: string
     ready: !!meta.ready,
     budget: { maxSteps: budget.maxSteps, maxMinutes: budget.maxMinutes },
     narrative: r.narrative,
+    pendingFinal: getPendingFinal(r.id),
   }
 }
 
@@ -576,6 +628,7 @@ export function listSessionSummaries(): SessionSummary[] {
       updatedAt: r.updated_at,
       counts,
       hasNarrative: !!r.narrative,
+      hasPendingFinal: !!r.pending_final,
     }
   })
 }

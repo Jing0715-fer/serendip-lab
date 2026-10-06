@@ -2,9 +2,10 @@
 
 // narrative-tab.tsx — 研究综述（markdown）+ 研究计划进度 + 深研方向 CTA（Task 13 双语）
 // Task 20：综述重梳理 —— 证据墙变化后（steer/素材/反馈）可按当前墙上内容重新生成综述
+// Task 23：延迟收官横幅 —— 最终综述因配额受限丢失时，展示自动重试状态 + 手动补收官 CTA
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { CheckCircle2, Circle, Compass, Loader2, RefreshCw, ScrollText, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Circle, Compass, Loader2, RefreshCw, ScrollText, Sparkles, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStudio, isAgentWorking } from '@/store/studio';
@@ -21,12 +22,39 @@ export function NarrativeTab() {
   const resynthesize = useStudio((s) => s.resynthesize);
   const setWorkspaceTab = useStudio((s) => s.setWorkspaceTab);
   const generateDirections = useStudio((s) => s.generateDirections);
+  const finalizeBusy = useStudio((s) => s.finalizeBusy);
+  const finalizeNow = useStudio((s) => s.finalizeNow);
   const t = useT();
 
   const working = isAgentWorking(session?.status);
+  const pendingFinal = session?.pendingFinal ?? null;
 
   return (
     <div className="studio-scroll h-full overflow-y-auto bg-[#f7f4ee] px-4 py-4 dark:bg-[#171411] sm:px-6">
+      {/* 延迟收官横幅（Task 23）：最终综述因模型服务受限丢失——自动重试中，也可手动补齐 */}
+      {pendingFinal && !working && (
+        <div
+          role="alert"
+          className="mx-auto mb-5 flex max-w-[720px] flex-col items-start gap-3 rounded-2xl border border-amber-700/30 bg-[#fdf3d7]/80 p-4 shadow-sm sm:flex-row sm:items-center dark:border-amber-600/30 dark:bg-amber-950/30"
+        >
+          <AlertTriangle size={20} className="shrink-0 text-[#a3450f] dark:text-amber-500" />
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-semibold text-stone-800 dark:text-stone-100">{t('narrative.pendingTitle')}</div>
+            <p className="mt-0.5 text-[11.5px] leading-relaxed text-stone-500 dark:text-stone-400">
+              {fmt(t('narrative.pendingBody'), { n: pendingFinal.attempts })}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => void finalizeNow()}
+            disabled={finalizeBusy}
+            className="shrink-0 gap-1.5 bg-gradient-to-b from-[#a3450f] to-[#8a380c] text-[12.5px] text-amber-50 hover:from-[#8f3c0c]"
+          >
+            {finalizeBusy ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+            {finalizeBusy ? t('narrative.finalizeBusy') : t('narrative.finalizeButton')}
+          </Button>
+        </div>
+      )}
       {/* 研究计划 */}
       {plan && plan.tasks.length > 0 && (
         <section className="mb-5 rounded-2xl border border-stone-300/70 bg-white/60 p-4 shadow-sm dark:border-stone-700 dark:bg-stone-800/50">

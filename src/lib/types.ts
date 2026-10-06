@@ -210,6 +210,16 @@ export type SessionSummary = {
   updatedAt: number;
   counts: { messages: number; nodes: number; edges: number; questions: number };
   hasNarrative: boolean;
+  /** 延迟收官标记（Task 23）：最终综述待补齐 */
+  hasPendingFinal: boolean;
+};
+
+/** 延迟收官状态（Task 23）：最终综合因配额/服务受限失败，等待自动/手动补收官 */
+export type PendingFinal = {
+  since: number;
+  attempts: number;
+  lastAttemptAt?: number;
+  error: string;
 };
 
 export type SessionFull = {
@@ -221,6 +231,7 @@ export type SessionFull = {
   updatedAt: number;
   ready: boolean;
   budget: { maxSteps: number; maxMinutes: number };
+  pendingFinal: PendingFinal | null;
 };
 
 export type SessionState = {

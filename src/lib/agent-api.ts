@@ -153,6 +153,12 @@ export const agentApi = {
   /** 409 agent_busy / 400 no_evidence 由调用方 catch 处理；结果经 SSE phase/state 事件带回 */
   resynthesize: (id: string, lang?: 'zh' | 'en') =>
     api<{ ok: boolean }>(`/sessions/${id}/resynthesize`, { method: 'POST', json: { lang } }),
+
+  // ---------- 补收官（Task 23 延迟收官）：最终综述曾因配额受限丢失 → 手动补齐 ----------
+
+  /** 409 agent_busy / 400 no_evidence 由调用方 catch 处理；结果经 SSE phase/state/done 事件带回 */
+  finalize: (id: string, lang?: 'zh' | 'en') =>
+    api<{ ok: boolean }>(`/sessions/${id}/finalize`, { method: 'POST', json: { lang } }),
 };
 
 export function sseUrl(sessionId: string): string {

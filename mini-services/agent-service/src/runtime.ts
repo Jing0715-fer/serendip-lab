@@ -7,8 +7,10 @@ import {
   findNodeByTitle, insertNode, updateNode, updateNodeContent, insertEdge,
   replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS, EVIDENCE_LEVELS,
   normalizeNodeStatus,
+  getPendingFinal, savePendingFinal, listPendingFinalSessions,
   type SessionPhase, type AgentStatus, type Plan, type PlanTask,
   type BoardNode, type ChatMessage, type ResearchQuestion, type EvidenceLevel,
+  type PendingFinalState,
 } from './db'
 import { llmJson } from './llm'
 import { INTERVIEWER_PROMPT, PLANNER_PROMPT, SYNTHESIZER_PROMPT, CONTRADICTS_PROMPT, buildInvestigatorPrompt } from './prompts'
@@ -28,11 +30,51 @@ const AUTO_START_DELAY_MS = 6_000
 /** 自动开启自主调研的默认预算（标准调研档） */
 const AUTO_START_BUDGET = { maxSteps: 40, maxMinutes: 15 } as const
 
+// ---------- 延迟收官 sweeper（Task 23） ----------
+/** 每次失败后的自动重试退避：2/5/10/15/30 分钟，之后每 30 分钟一次 */
+const FINAL_RETRY_DELAYS = [2 * 60_000, 5 * 60_000, 10 * 60_000, 15 * 60_000, 30 * 60_000] as const
+/** 自动重试上限（约 2.5 小时累计退避；达上限后仅保留手动补收官入口） */
+const FINAL_MAX_ATTEMPTS = 12
+
+/** 第 attempts 次失败后距下次自动重试的间隔 */
+function finalRetryDelayMs(attempts: number): number {
+  return FINAL_RETRY_DELAYS[Math.min(Math.max(attempts, 0), FINAL_RETRY_DELAYS.length - 1)]
+}
+
+/**
+ * 扫描并补收官（index.ts 心跳每 60s 调一次）：
+ * - 只处理 pending_final 非空且到退避时间的会话（状态全在 DB，重启后自然续跑）
+ * - runtime 正在跑（研究/重综合/补收官中）→ 跳过本轮
+ * - 达 FINAL_MAX_ATTEMPTS → 不再自动重试（手动 finalize 端点不受限）
+ */
+export async function sweepPendingFinals(): Promise<number> {
+  let fired = 0
+  for (const row of listPendingFinalSessions()) {
+    try {
+      const rt = AgentRuntime.find(row.id)
+      if (rt?.running) continue
+      const pf = getPendingFinal(row.id)
+      if (!pf) continue
+      if (pf.attempts >= FINAL_MAX_ATTEMPTS) continue // 自动重试上限，等手动
+      const lastAt = pf.lastAttemptAt ?? pf.since
+      if (now() < lastAt + finalRetryDelayMs(pf.attempts)) continue // 退避未到
+      insertActivity(row.id, { type: 'notice', summary: noticeFor(getSessionLang(row.id), 'finalizeAutoStart') })
+      console.log(`[sweeper] auto-finalizing ${row.id.slice(0, 8)} (attempts=${pf.attempts})`)
+      void AgentRuntime.get(row.id).finalizeNow().catch((e) => console.error('[sweep-finalize]', row.id, e))
+      fired++
+    } catch (e) {
+      console.error('[sweep-pending]', row.id, e)
+    }
+  }
+  return fired
+}
+
 /** 默认会话标题（任何一种都允许被 title_suggestion 覆盖） */
 const DEFAULT_SESSION_TITLES = ['新调查', '新课题', 'New Project']
 
-/** 归一化证据等级：严格匹配六个合法值，否则 null（未定级）；非法值一律落 null */
-function normalizeLevel(v: unknown): EvidenceLevel | null {
+/** 归一化证据等级：严格匹配六个合法值，否则 null（未定级）；非法值一律落 null。
+ *  Task 23 起导出：explore.ts 反馈钉墙链路同样需要归一化（不再只靠 sourceRef 启发式） */
+export function normalizeLevel(v: unknown): EvidenceLevel | null {
   const s = String(v ?? '').trim().toLowerCase()
   return (EVIDENCE_LEVELS as string[]).includes(s) ? (s as EvidenceLevel) : null
 }
@@ -44,7 +86,7 @@ const PRECLINICAL_RE = /临床前|preclinical|小鼠|\bmouse\b|\bmice\b|murine|C
 const INVITRO_RE = /细胞系|cell lines?\b|in vitro|体外培养|培养细胞|2D 培养|3D 培养|类器官|organoids?\b/i
 const HUMAN_RE = /患者|patient|受试者|参与者|志愿者|队列|cohort|前瞻性|回顾性|prospective|retrospective|临床试验|clinical trial|\btrial\b|随机|randomi[sz]ed|安慰剂|placebo|人群|人体|人类|流行病学|epidemiolog|孟德尔|Mendelian|全基因组关联|\bGWAS\b/i
 
-function sanityCheckLevel(level: EvidenceLevel | null, title: string, content: string): EvidenceLevel | null {
+export function sanityCheckLevel(level: EvidenceLevel | null, title: string, content: string): EvidenceLevel | null {
   if (!level || level === 'user' || level === 'computational') return level
   const text = `${title} ${content}`
   if (HUMAN_RE.test(text)) return level // 含人体研究标记 → 不动，宁可漏纠不可误纠
@@ -80,6 +122,7 @@ export function stateSnapshot(sessionId: string): Record<string, unknown> {
     stats,
     phase: row.phase,
     status: row.status,
+    pendingFinal: getPendingFinal(sessionId),
   }
 }
 
@@ -147,6 +190,8 @@ export class AgentRuntime {
   private autoStartTimer: ReturnType<typeof setTimeout> | null = null
   /** 预算紧张收敛模式已提示（每轮研究重置，避免活动日志刷屏） */
   private tightNotified = false
+  /** 最近一次综合失败摘要（延迟收官记录用；callSynthesizer 返回 null 前写入） */
+  private lastSynthError: string | null = null
 
   constructor(sessionId: string) {
     this.sessionId = sessionId
@@ -349,6 +394,17 @@ export class AgentRuntime {
       synth = await this.callSynthesizer(true)
     } catch (e) {
       console.error('[final-synthesize]', e)
+      this.lastSynthError = e instanceof Error ? e.message : String(e)
+    }
+    // Task 23 延迟收官（P1）：最终综合失败（持续 429 配额耗尽远超内层重试耐心）时，
+    // 不再静默吞掉——持久化 pendingFinal，后台 sweeper 按退避自动补收官，前端同时可见可手动
+    if (!synth) {
+      const pf: PendingFinalState = { since: now(), attempts: 0, error: (this.lastSynthError || 'synthesis failed').slice(0, 200) }
+      savePendingFinal(this.sessionId, pf)
+      insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), 'finalizePending') })
+    } else if (getPendingFinal(this.sessionId)) {
+      // 成功收官：清掉可能残留的历史 pendingFinal（如上一轮挂起后本轮重跑成功）
+      savePendingFinal(this.sessionId, null)
     }
     // 矛盾猎手兜底：最终综合后若墙上零 contradicts 边且综述提及矛盾 → 定向结构化（失败不阻断收官）
     await this.ensureContradictionEdges()
@@ -375,6 +431,8 @@ export class AgentRuntime {
       insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), 'resynthesizeStart') })
       await this.callSynthesizer(true)
       await this.ensureContradictionEdges()
+      // 手动重梳理成功同样视为收官完成：清掉 pendingFinal，横幅随之消失
+      if (getPendingFinal(this.sessionId)) savePendingFinal(this.sessionId, null)
       this.setPhase('done', 'done')
       this.emitState()
       return { ok: true }
@@ -383,6 +441,60 @@ export class AgentRuntime {
       insertActivity(this.sessionId, { type: 'notice', summary: `重综合失败: ${msg}`, ok: false })
       this.setPhase(null, 'error')
       return { ok: false, error: msg }
+    } finally {
+      this.running = false
+    }
+  }
+
+  // ---------- 补收官（Task 23 延迟收官）：手动 finalize 端点与后台 sweeper 共用 ----------
+  // 语义：把当初因模型服务受限而丢失的最终综述 + 矛盾猎手补齐；成功后清 pendingFinal。
+  // 失败：attempts+1、lastAttemptAt=now 落库（重启后 sweeper 仍能续退避）。
+  async finalizeNow(): Promise<{ ok: boolean; error?: string }> {
+    if (this.running) return { ok: false, error: 'agent_busy' }
+    if (listNodes(this.sessionId).length === 0) return { ok: false, error: 'no_evidence' }
+    this.running = true
+    const lang = getSessionLang(this.sessionId)
+    const recordFailure = (): void => {
+      const cur = getPendingFinal(this.sessionId) ?? { since: now(), attempts: 0, error: '' }
+      const attempts = cur.attempts + 1
+      const nextDelayMin = Math.round(finalRetryDelayMs(attempts) / 60_000)
+      savePendingFinal(this.sessionId, {
+        since: cur.since,
+        attempts,
+        lastAttemptAt: now(),
+        error: (this.lastSynthError || 'synthesis failed').slice(0, 200),
+      })
+      insertActivity(this.sessionId, {
+        type: 'notice',
+        ok: false,
+        summary: attempts >= FINAL_MAX_ATTEMPTS
+          ? noticeFor(lang, 'finalizeGiveup', { n: attempts })
+          : noticeFor(lang, 'finalizeRetry', { n: attempts, err: (this.lastSynthError || '').slice(0, 60), min: nextDelayMin }),
+      })
+      this.emitState()
+    }
+    try {
+      let synth: SynthOut | null = null
+      try {
+        synth = await this.callSynthesizer(true)
+      } catch (e) {
+        // callSynthesizer 正常 LLM 失败走 return null；此处兜底 DB/意外异常
+        this.lastSynthError = e instanceof Error ? e.message : String(e)
+        console.error('[finalize-synthesize]', e)
+      }
+      if (!synth) {
+        recordFailure()
+        return { ok: false, error: this.lastSynthError || 'synthesis failed' }
+      }
+      await this.ensureContradictionEdges()
+      savePendingFinal(this.sessionId, null)
+      this.setPhase('done', 'done')
+      insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(lang, 'finalizeDone') })
+      const noticeMsg = listMessages(this.sessionId).filter((m) => m.kind === 'notice').pop()
+      if (noticeMsg) this.emitMessage(noticeMsg)
+      broadcast(this.sessionId, 'done', { reason: 'finalized', summary: noticeFor(lang, 'finalizeDone') })
+      this.emitState()
+      return { ok: true }
     } finally {
       this.running = false
     }
@@ -1056,6 +1168,7 @@ export class AgentRuntime {
 
   async callSynthesizer(final: boolean): Promise<SynthOut | null> {
     this.setPhase('synthesizing', 'thinking')
+    this.lastSynthError = null // 每次进入时重置；仅本次调用失败时写入
     const plan = getPlan(this.sessionId)
     const nodes = listNodes(this.sessionId)
     const edges = listEdges(this.sessionId)
@@ -1098,6 +1211,7 @@ export class AgentRuntime {
       }
     }
     if (!res.ok) {
+      this.lastSynthError = res.error.slice(0, 200) // Task 23：延迟收官记录用
       insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '综合失败', 'Synthesis failed')}: ${res.error}`, ok: false })
       return null
     }

@@ -213,6 +213,7 @@ export const FEEDBACK_PROMPT = `# 角色
 # 推理准则
 - 先对照：反馈结果与原假说/预期（方案 hypothesis 与 metrics）的对照——支持、动摇还是无法判定？必须明确指出依据。
 - 用户的实验数据/观察是一手证据，权重高于文献证据：必须用 graph_ops 里的 add_evidence 把它钉上证据墙（kind=evidence，level 填 "user"——用户一手数据等级；sourceRef 写"User experiment"或"用户实验"，content 写具体结果与条件），并用 link_evidence 挂到它支持/动摇的假说或课题上（supports/contradicts）。
+- 推理中引用的文献/外部证据（非用户一手数据）如需落墙：kind=evidence + level 按研究类型如实分级（user/rct/cohort/animal/invitro/computational，宁可降级不可虚标）+ sourceRef 用 PMID/DOI。
 - 若反馈动摇了某个假说：用 update_evidence 把该假说置信度/状态改低（status=contradicted 或 confidence 调低）；若推翻了原先的矛盾解释，也要把对应证据的关系修正。
 - 证据墙整理完后，logic_updates 用人话逐条告诉用户你改了什么、为什么（每条一句话）。
 - plan_patch：只有当反馈实质性地改变了探索路线时才给（如某分支被否定、发现了更优路径）；路线没变就返回空对象 {}，不要为改而改。
@@ -224,7 +225,7 @@ export const FEEDBACK_PROMPT = `# 角色
  "verdict":"supports|contradicts|mixed|inconclusive|refined",
  "logic_updates":["证据墙整理说明 1：如「你的实验结果已钉为新证据卡 X」「假说 H1 置信度降至 0.35」", "…"],
  "graph_ops":[
-   {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|gap","title":"≤40字","content":"≤300字","detail?":"2-4句解释这条证据意味着什么","sourceRef?":"如 User experiment / PMID:123456","sourceUrl?":"https://…","confidence?":0.8},
+   {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|gap","title":"≤40字","content":"≤300字","detail?":"2-4句解释这条证据意味着什么","sourceRef?":"如 User experiment / PMID:123456","sourceUrl?":"https://…","confidence?":0.8,"level?":"user|rct|cohort|animal|invitro|computational"},
    {"op":"link_evidence","from":"节点标题","to":"节点标题","relation":"supports|contradicts|relates|derives|answers","label?":"短标签"},
    {"op":"update_evidence","title":"...","patch":{"confidence?":0.4,"status?":"strong|weak|contradicted"}}
  ],

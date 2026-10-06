@@ -120,6 +120,29 @@ export function noticeFor(lang: Lang, key: NoticeKey, params: Record<string, str
     verdict_mixed: ['反馈部分支持、部分否定', 'partly supported, partly contradicted'],
     verdict_inconclusive: ['证据尚不足以判定', 'inconclusive so far'],
     verdict_refined: ['问题本身被重新定义', 'the question itself got refined'],
+    // ---------- 延迟收官（Task 23） ----------
+    finalizePending: [
+      '⚠️ 最终综述因模型服务受限（如配额耗尽）未能完成——已记录待补收官，配额恢复后将自动重试，也可在综述页手动「补收官」',
+      '⚠️ The final review could not be completed (model service limited, e.g. quota exhausted) — recorded for deferred completion; it will auto-retry once the service recovers, or you can finalize manually from the Review tab',
+    ],
+    finalizeRetry: [
+      '⏳ 补收官第 {n} 次尝试失败（{err}），{min} 分钟后自动重试',
+      '⏳ Deferred finalization attempt {n} failed ({err}) — auto-retry in {min} min',
+    ],
+    finalizeDone: [
+      '✅ 延迟收官完成：最终综述与矛盾分析已补齐',
+      '✅ Deferred completion done: the final review and contradiction analysis are ready',
+    ],
+    finalizeManualStart: ['手动补收官已启动：重新生成最终综述…', 'Manual finalization started: regenerating the final review…'],
+    finalizeManualDone: [
+      '✅ 手动补收官完成：最终综述已补齐',
+      '✅ Manual finalization done: the final review is ready',
+    ],
+    finalizeGiveup: [
+      '补收官自动重试已达上限（{n} 次），不再自动重试——可在综述页手动「补收官」',
+      'Deferred finalization gave up after {n} auto-retries — you can still finalize manually from the Review tab',
+    ],
+    finalizeAutoStart: ['⏳ 检测到模型服务恢复，自动补收官中…', '⏳ Model service looks recovered — auto-finalizing…'],
   }
   let text = pack[key][lang === 'en' ? 1 : 0]
   for (const [k, v] of Object.entries(params)) {
@@ -162,3 +185,10 @@ export type NoticeKey =
   | 'verdict_mixed'
   | 'verdict_inconclusive'
   | 'verdict_refined'
+  | 'finalizePending'
+  | 'finalizeRetry'
+  | 'finalizeDone'
+  | 'finalizeManualStart'
+  | 'finalizeManualDone'
+  | 'finalizeGiveup'
+  | 'finalizeAutoStart'

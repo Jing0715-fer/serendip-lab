@@ -2,11 +2,11 @@
 import {
   createSession, getSessionRow, mapSessionFull, listSessionSummaries, deleteSession,
   updateSessionFields, listMessages, listNodes, listEdges, listQuestions, getPlan,
-  listActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
+  listActivity, insertActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
   computeStats, touchSession, getDirections, listExplorations, NODE_KINDS,
 } from './src/db'
 import { broadcast, makeSseResponse } from './src/emitter'
-import { AgentRuntime, stateSnapshot } from './src/runtime'
+import { AgentRuntime, stateSnapshot, sweepPendingFinals } from './src/runtime'
 import { seedDemoSession } from './src/seed'
 import { generateDirections, directionsRunning } from './src/directions'
 import { generateExplorePlan, submitExploreFeedback, regenerateExplorePlan, exploreJobOf } from './src/explore'
@@ -305,7 +305,7 @@ const server = Bun.serve({
     }
 
     // --- /api/agent/sessions/:id 子操作 ---
-    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions|explorations|resynthesize))?$/)
+    const subMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)(?:\/(chat|research|control|notes|layout|star|directions|explorations|resynthesize|finalize))?$/)
     if (subMatch) {
       const id = subMatch[1]
       const action = subMatch[2]
@@ -392,6 +392,19 @@ const server = Bun.serve({
         return json({ ok: true })
       }
 
+      // 补收官（Task 23 延迟收官）：最终综合曾因配额/服务受限丢失 → 手动重试；
+      // 不要求 pending_final 已设置（也允许用户主动重生成最终综述），异步执行，结果经 SSE 推送
+      if (action === 'finalize' && method === 'POST') {
+        const body = await readBody(request)
+        if (body.lang) setSessionLang(id, normLang(body.lang))
+        const existing = AgentRuntime.find(id)
+        if (existing?.running) return errJson('agent_busy', 409)
+        if (listNodes(id).length === 0) return errJson('no_evidence', 400)
+        insertActivity(id, { type: 'notice', summary: noticeFor(getSessionLang(id), 'finalizeManualStart') })
+        void AgentRuntime.get(id).finalizeNow().catch((e) => console.error('[manual-finalize]', id, e))
+        return json({ ok: true })
+      }
+
       if (action === 'control' && method === 'POST') {
         const body = await readBody(request)
         return handleControl(id, body)
@@ -462,6 +475,13 @@ setInterval(() => {
     AgentRuntime.reapDead()
   } catch {
     /* 热重载后旧模块图无此方法，下次完整重启即恢复 */
+  }
+  // Task 23 延迟收官：扫描待补收官会话，到退避时间即自动重试（同样防热重载旧模块图）
+  try {
+    const fired = sweepPendingFinals()
+    if (fired instanceof Promise) void fired.catch(() => {})
+  } catch {
+    /* 同上 */
   }
   const sessions = listSessionSummaries().filter((s) => s.status === 'running' || s.status === 'thinking' || s.status === 'awaiting_user')
   if (sessions.length) {

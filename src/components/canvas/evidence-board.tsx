@@ -32,7 +32,7 @@ import type {
   NodeKind,
 } from '@/lib/types';
 
-import { KIND_COLOR, nodeTypes, type BoardNodeData, type EvidenceFlowNode } from './board-nodes';
+import { KIND_COLOR, EVIDENCE_LEVEL_COLOR, nodeTypes, type BoardNodeData, type EvidenceFlowNode } from './board-nodes';
 import { edgeTypes, STRING_STYLE, type EvidenceFlowEdge } from './string-edge';
 import { layoutBoard } from './board-layout';
 import { nodeMatchesSearch } from './node-search';
@@ -410,9 +410,13 @@ function EvidenceBoardInner({
     >
       <MiniMap
         className="ev-minimap"
-        nodeColor={(n) =>
-          KIND_COLOR[(n.data as BoardNodeData | undefined)?.kind ?? 'question']
-        }
+        nodeColor={(n) => {
+          // Task 23 P2：带等级的 evidence 卡显示等级色（小地图即证据等级分布图）；
+          // 其余（含未定级 evidence）沿用类型色
+          const d = n.data as BoardNodeData | undefined
+          if (d?.kind === 'evidence' && d.level) return EVIDENCE_LEVEL_COLOR[d.level]
+          return KIND_COLOR[d?.kind ?? 'question']
+        }}
         nodeStrokeColor="rgba(90,62,28,.55)"
         maskColor="rgba(70,48,22,.24)"
         maskStrokeColor="rgba(70,48,22,.6)"

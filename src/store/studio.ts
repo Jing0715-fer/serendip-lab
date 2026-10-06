@@ -11,6 +11,7 @@ import type {
   BoardNode,
   ChatMessage,
   Exploration,
+  PendingFinal,
   Plan,
   ResearchDirections,
   ResearchQuestion,
@@ -29,7 +30,7 @@ export type AgentEvent =
   | { type: 'thought'; step: number; text: string }
   | { type: 'tool_call'; callId: string; tool: string; args: Record<string, unknown>; step: number }
   | { type: 'tool_result'; callId: string; tool: string; ok: boolean; summary: string; durationMs: number; step: number }
-  | { type: 'state'; nodes: BoardNode[]; edges: BoardEdge[]; narrative: string; questions: ResearchQuestion[]; plan: Plan | null; stats: Stats; phase: SessionPhase; status: AgentStatus }
+  | { type: 'state'; nodes: BoardNode[]; edges: BoardEdge[]; narrative: string; questions: ResearchQuestion[]; plan: Plan | null; stats: Stats; phase: SessionPhase; status: AgentStatus; pendingFinal?: PendingFinal | null }
   | { type: 'plan'; plan: Plan }
   | ({ type: 'directions' } & ResearchDirections)
   | { type: 'explore'; nodeId: string; exploration: Exploration }
@@ -73,6 +74,10 @@ type StudioState = {
   /** 综述重梳理进行中（POST resynthesize 已受理，等待 SSE phase(done)） */
   resyncBusy: boolean;
 
+  // ---- 延迟收官（Task 23）：最终综述因配额受限丢失 → 自动/手动补齐 ----
+  /** 手动补收官进行中（POST finalize 已受理，等待 SSE phase(done)/state） */
+  finalizeBusy: boolean;
+
   // ---- 瞬态 ----
   connected: boolean;
   bootstrapping: boolean;
@@ -110,6 +115,8 @@ type StudioState = {
   setResearchPreset: (focus: string | null) => void;
   /** 综述重梳理（Task 20）：按当前证据墙重新生成研究综述 */
   resynthesize: () => Promise<void>;
+  /** 手动补收官（Task 23）：最终综述曾因配额受限丢失 → 立即重试补齐 */
+  finalizeNow: () => Promise<void>;
   applyEvent: (ev: AgentEvent) => void;
   setConnected: (v: boolean) => void;
   openInspector: (nodeId: string | null) => void;
@@ -123,7 +130,7 @@ let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function ingestState(
   s: Pick<StudioState, 'nodes' | 'edges' | 'narrative' | 'questions' | 'plan' | 'stats' | 'session'>,
-  st: { nodes?: BoardNode[]; edges?: BoardEdge[]; narrative?: string; questions?: ResearchQuestion[]; plan?: Plan | null; stats?: Stats; phase?: SessionPhase; status?: AgentStatus }
+  st: { nodes?: BoardNode[]; edges?: BoardEdge[]; narrative?: string; questions?: ResearchQuestion[]; plan?: Plan | null; stats?: Stats; phase?: SessionPhase; status?: AgentStatus; pendingFinal?: PendingFinal | null }
 ): Record<string, unknown> {
   const prevIds = new Set(s.nodes.map((n) => n.id));
   const newNodes = st.nodes ?? s.nodes;
@@ -136,8 +143,12 @@ function ingestState(
     plan: st.plan !== undefined ? st.plan : s.plan,
     stats: st.stats ?? s.stats,
   };
+  // Task 23：pendingFinal 随快照更新（sweeper 补齐成功 → null 横幅自动消失；失败重试 → attempts 增长）
+  if (st.pendingFinal !== undefined && s.session) {
+    patch.session = { ...(patch.session as SessionFull | undefined ?? s.session), pendingFinal: st.pendingFinal };
+  }
   if (st.phase && s.session) {
-    patch.session = { ...s.session, phase: st.phase, status: st.status ?? s.session.status };
+    patch.session = { ...(patch.session as SessionFull | undefined ?? s.session), phase: st.phase, status: st.status ?? s.session.status };
   }
   if (fresh.length) {
     patch.liveIds = fresh;
@@ -176,6 +187,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   exploreOpen: false,
   researchPreset: null,
   resyncBusy: false,
+  finalizeBusy: false,
 
   connected: false,
   bootstrapping: false,
@@ -453,6 +465,38 @@ export const useStudio = create<StudioState>((set, get) => ({
     }, 200000);
   },
 
+  // 手动补收官（Task 23 延迟收官）：POST 立即返回；成功经 SSE phase(done)+state 解锁，
+  // 失败后端不改 phase → 由 200s 兜底拉全量解锁（pendingFinal.attempts 会随快照增长）
+  finalizeNow: async () => {
+    const s = get();
+    if (!s.session || s.finalizeBusy) return;
+    if (isAgentWorking(s.session.status)) return; // 研究进行中不打断
+    if (s.nodes.length === 0) return;
+    const sid = s.session.id;
+    set({ finalizeBusy: true });
+    try {
+      await agentApi.finalize(sid, currentLang());
+    } catch (e) {
+      set({ finalizeBusy: false });
+      toast.error(
+        currentLang() === 'zh'
+          ? `补收官启动失败：${e instanceof Error ? e.message : String(e)}`
+          : `Failed to start finalization: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return;
+    }
+    // SSE 掉线兜底：200s 后仍未收到 phase(done) → 拉全量恢复并解锁
+    setTimeout(() => {
+      const cur = useStudio.getState();
+      if (cur.session?.id === sid && cur.finalizeBusy) {
+        void cur
+          .loadSession(sid)
+          .then(() => useStudio.setState({ finalizeBusy: false }))
+          .catch(() => useStudio.setState({ finalizeBusy: false }));
+      }
+    }, 200000);
+  },
+
   generateExplorePlan: async (nodeId) => {
     const s = get();
     if (!s.session || s.exploreBusy[nodeId]) return;
@@ -620,6 +664,15 @@ export const useStudio = create<StudioState>((set, get) => ({
               : 'Review re-synthesized from the latest wall'
           );
         }
+        // 手动补收官完成（Task 23）：phase(done) 到达 → 解锁 + 提示（pendingFinal 清零由 state 快照带回）
+        if (s.finalizeBusy && ev.status === 'done') {
+          set({ finalizeBusy: false });
+          toast.success(
+            currentLang() === 'zh'
+              ? '补收官完成：最终综述已补齐'
+              : 'Finalization done: the final review is ready'
+          );
+        }
         break;
       }
       case 'thought': {
@@ -704,7 +757,7 @@ export const useStudio = create<StudioState>((set, get) => ({
         // 探索任务失败也会广播 error → 同步清 busy，避免按钮永久锁死
         const busy = { ...s.exploreBusy };
         for (const k of Object.keys(busy)) delete busy[k];
-        set({ toolRunning: null, interviewBusy: false, directionsBusy: false, exploreBusy: busy, resyncBusy: false });
+        set({ toolRunning: null, interviewBusy: false, directionsBusy: false, exploreBusy: busy, resyncBusy: false, finalizeBusy: false });
         if (ev.message) {
           toast.error(ev.message);
         }
