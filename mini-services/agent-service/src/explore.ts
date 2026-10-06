@@ -8,7 +8,7 @@
 import { broadcast } from './emitter'
 import {
   getSessionRow, getMeta, listNodes, listEdges, insertActivity, insertMessage,
-  touchSession, insertNode, updateNode, updateNodeContent, insertEdge, findNodeByTitle,
+  touchSession, insertNode, updateNode, updateNodeContent, insertEdge, findNodeByTitle, findNodeBySourceKey, sourceDedupKey,
   saveExploration, getExploration, deleteExploration, NODE_KINDS, EDGE_RELATIONS,
   normalizeNodeStatus,
   type BoardNode, type TopicPlan, type FeedbackRound, type Exploration, type ExploreVerdict,
@@ -231,16 +231,31 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
           )
           applied.push(L(lang, `更新卡片「${title}」`, `Updated card “${title}”`))
         } else {
-          insertNode(sessionId, {
-            kind: kind as any, title, content,
-            detail: op.detail ? String(op.detail) : null,
-            sourceRef: op.sourceRef ? String(op.sourceRef) : null,
-            sourceUrl: op.sourceUrl ? String(op.sourceUrl) : null,
-            confidence: op.confidence != null ? Math.min(1, Math.max(0, Number(op.confidence))) : null,
-            level,
-            pinnedBy: 'agent',
-          })
-          applied.push(L(lang, `钉上新卡片「${title}」`, `Pinned new card “${title}”`))
+          // Task 24 唯一性防线：标题不同但同源（同 PMID/DOI）→ 合并进原卡（与 runtime toolAddEvidence 同语义）
+          const dedupKey = sourceDedupKey(op.sourceRef ? String(op.sourceRef) : null, op.sourceUrl ? String(op.sourceUrl) : null)
+          const twin = (kind === 'evidence' || kind === 'source') && dedupKey ? findNodeBySourceKey(sessionId, dedupKey) : null
+          if (twin) {
+            updateNodeContent(
+              sessionId, twin.id, content,
+              op.confidence != null ? Math.min(1, Math.max(0, Number(op.confidence))) : null,
+              op.sourceRef ? String(op.sourceRef) : null,
+              op.sourceUrl ? String(op.sourceUrl) : null,
+              op.detail ? String(op.detail) : null,
+              level
+            )
+            applied.push(L(lang, `同源合并进「${twin.title.slice(0, 30)}」（${dedupKey}）`, `Merged into “${twin.title.slice(0, 30)}” (${dedupKey})`))
+          } else {
+            insertNode(sessionId, {
+              kind: kind as any, title, content,
+              detail: op.detail ? String(op.detail) : null,
+              sourceRef: op.sourceRef ? String(op.sourceRef) : null,
+              sourceUrl: op.sourceUrl ? String(op.sourceUrl) : null,
+              confidence: op.confidence != null ? Math.min(1, Math.max(0, Number(op.confidence))) : null,
+              level,
+              pinnedBy: 'agent',
+            })
+            applied.push(L(lang, `钉上新卡片「${title}」`, `Pinned new card “${title}”`))
+          }
         }
       } else if (op?.op === 'link_evidence' && op.from && op.to) {
         const relation = String(op.relation || 'relates')
@@ -250,6 +265,9 @@ function applyGraphOps(sessionId: string, ops: any[]): { applied: string[] } {
         let dst = resolveNodeByTitle(ns, String(op.to))
         if (!src || !dst) continue
         if (src.id === dst.id) continue
+        // Task 24 同名异卡守卫：同标题不同 id（语义自环）不连
+        const normT = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+        if (normT(src.title) === normT(dst.title)) continue
         // answers 方向矫正（同 runtime）
         if (relation === 'answers' && src.kind === 'question' && dst.kind !== 'question') {
           const t = src; src = dst; dst = t

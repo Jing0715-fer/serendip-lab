@@ -703,6 +703,39 @@ export function findNodeByTitle(sessionId: string, title: string): BoardNode | n
   return nodes.find((n) => norm(n.title) === t) ?? null
 }
 
+// ---------- Task 24：证据卡唯一性防线（同源去重键） ----------
+
+/**
+ * 从 sourceRef / sourceUrl 提取规范化文献标识（PMID 优先，其次 DOI）作为同源去重键。
+ * 真实测试发现：investigator 用全称标题落墙（如「Akkermansia muciniphila 在肥胖中…」），
+ * synth 的 graph_ops / 抢救落墙用缩写标题（「Akkermansia 在肥胖中…」）→ 精确标题去重漏判 →
+ * 同一篇文献出现两张卡（3 对重复全部同 PMID）。同一 PMID 几乎必然是同一文献，可安全合并。
+ * 识别格式：PMID:123456 / PMID 123456 / pubmed.ncbi.nlm.nih.gov/123456 / DOI:10.x/… / doi.org/10.x/…
+ */
+export function sourceDedupKey(sourceRef?: string | null, sourceUrl?: string | null): string | null {
+  const ref = String(sourceRef || '').trim()
+  const url = String(sourceUrl || '').trim()
+  const grab = (s: string): string | null => {
+    if (!s) return null
+    let m = /\bpmid[:\s]*(\d{4,9})\b/i.exec(s) || /pubmed\.ncbi\.nlm\.nih\.gov\/(\d{4,9})/i.exec(s) || /[?&;]pmid=(\d{4,9})\b/i.exec(s)
+    if (m) return `PMID:${m[1]}`
+    m = /\bdoi[:\s]*(10\.\d{4,9}\/[^\s"'<>]+)/i.exec(s) || /doi\.org\/(10\.\d{4,9}\/[^\s"'<>]+)/i.exec(s)
+    if (m) return `DOI:${m[1].replace(/[.,;)]+$/, '').toLowerCase()}`
+    return null
+  }
+  return grab(ref) ?? grab(url)
+}
+
+/** 按同源去重键找已钉的证据/文献卡（source 卡同样参与，避免 evidence↔source 双轨重复） */
+export function findNodeBySourceKey(sessionId: string, key: string): BoardNode | null {
+  for (const n of listNodes(sessionId)) {
+    if (n.kind !== 'evidence' && n.kind !== 'source') continue
+    const k = sourceDedupKey(n.sourceRef, n.sourceUrl)
+    if (k && k === key) return n
+  }
+  return null
+}
+
 export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pick<BoardNode, 'confidence' | 'content' | 'status' | 'tags' | 'title' | 'starred' | 'level'>>) {
   const sets: string[] = []
   const vals: any[] = []

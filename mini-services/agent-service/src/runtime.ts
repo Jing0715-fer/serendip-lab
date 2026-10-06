@@ -4,7 +4,7 @@ import {
   getBudget, saveBudget, getMeta, saveMeta, getPlan, savePlan,
   listNodes, listEdges, listMessages, listQuestions,
   insertMessage, insertActivity, updateSessionFields, getSessionRow,
-  findNodeByTitle, insertNode, updateNode, updateNodeContent, insertEdge,
+  findNodeByTitle, findNodeBySourceKey, sourceDedupKey, insertNode, updateNode, updateNodeContent, insertEdge,
   replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS, EVIDENCE_LEVELS,
   normalizeNodeStatus,
   getPendingFinal, savePendingFinal, listPendingFinalSessions,
@@ -838,6 +838,33 @@ export class AgentRuntime {
       this.emitState()
       return { ok: true, updated: true, nodeId: existing.id, title: existing.title }
     }
+
+    // Task 24 唯一性防线：标题不同但同源（同 PMID/DOI）的证据卡 → 合并进原卡而非新建重复卡。
+    // 真实测试根因：investigator 全称标题 vs synth 缩写标题重钉同一文献（3 对重复全部同 PMID）。
+    if (kind === 'evidence' || kind === 'source') {
+      const dedupKey = sourceDedupKey(args.sourceRef, args.sourceUrl)
+      const twin = dedupKey ? findNodeBySourceKey(this.sessionId, dedupKey) : null
+      if (twin) {
+        updateNodeContent(
+          this.sessionId, twin.id, content, confidence,
+          args.sourceRef ? String(args.sourceRef) : null,
+          args.sourceUrl ? String(args.sourceUrl) : null,
+          args.detail ? String(args.detail) : null,
+          level
+        )
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+          `同源合并：「${title.slice(0, 30)}」与已钉卡「${twin.title.slice(0, 30)}」引用同一文献（${dedupKey}），已并入原卡`,
+          `Merged: “${title.slice(0, 30)}” cites the same source (${dedupKey}) as existing card “${twin.title.slice(0, 30)}” — folded into the original`) })
+        this.emitState()
+        return {
+          ok: true, merged: true, nodeId: twin.id, title: twin.title, sourceKey: dedupKey,
+          note: L(this.sessionId,
+            `同一文献（${dedupKey}）已在卡「${twin.title}」上：已合并更新该卡，未新建重复卡；后续请直接引用该标题或 update_evidence 更新`,
+            `Same source (${dedupKey}) already on card “${twin.title}”: merged into it instead of creating a duplicate; reference that title or use update_evidence going forward`),
+        }
+      }
+    }
+
     const node = insertNode(this.sessionId, {
       kind,
       title,
@@ -872,6 +899,14 @@ export class AgentRuntime {
       return { error: `未找到节点（${!srcNode ? `from: ${from}` : `to: ${to}`}）`, candidates }
     }
     if (srcNode.id === dstNode.id) return { error: '不能连接节点自身' }
+
+    // Task 24 同名异卡守卫：课题卡与同题假说卡等（同标题不同 id）互连是语义自环，拒绝并引导改连
+    const normT = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+    if (normT(srcNode.title) === normT(dstNode.title)) {
+      return { error: L(this.sessionId,
+        `「${srcNode.title.slice(0, 30)}」存在两张同名卡（${srcNode.kind}/${dstNode.kind}），连接它们没有语义意义；请连接到其他证据/假说/课题卡`,
+        `Two cards share the title “${srcNode.title.slice(0, 30)}” (${srcNode.kind}/${dstNode.kind}) — linking them is semantically meaningless; link to a different evidence/hypothesis/topic card instead`) }
+    }
 
     // 语义方向矫正：answers 应由假说/证据指向问题；若模型给反了则自动翻转
     let finalSrc = srcNode
@@ -1336,10 +1371,12 @@ export class AgentRuntime {
       }
 
       // derives 连线：课题卡 --derives--> 支撑证据（最多 4 条，去重幂等）
+      // Task 24 守卫：evidence_refs 解析到与课题卡同名的卡（如 synth 同时落了同题假说卡）→ 语义自环，跳过
       const nodes = listNodes(this.sessionId)
+      const normTitle = (s: string) => s.toLowerCase().replace(/\s+/g, '')
       for (const ref of (q.evidenceRefs || []).slice(0, 4)) {
         const target = resolveNodeByTitle(nodes, String(ref))
-        if (target && target.id !== nodeId && target.kind !== 'topic') {
+        if (target && target.id !== nodeId && target.kind !== 'topic' && normTitle(target.title) !== normTitle(title)) {
           insertEdge(this.sessionId, nodeId, target.id, 'derives', null)
         }
       }

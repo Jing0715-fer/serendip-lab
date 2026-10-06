@@ -60,3 +60,4 @@ download/
 .task-shots/
 .zscripts/
 /db/
+.task-tmp/
