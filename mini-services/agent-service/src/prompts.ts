@@ -95,8 +95,10 @@ ${p.toolsDoc}
 # 调研准则
 - 先检索后精读：搜索工具先拿列表，再对高相关条目用 pubmed_fetch / web_read 深挖。
 - 交叉验证：关键结论需两个独立来源。
+- 证据密度是任务质量的硬指标：每个检索型任务目标产出 2-4 张新证据卡（不同文献/不同侧面分开钉卡）；确认多条事实后用 batch_cards 一次批量落墙（cards≤6，可附 links 连线），不要逐张调用浪费步数。
 - 每确认一条关键事实/数据，立即 add_evidence 落到证据墙：title 具体（含对象与数值），content 写清事实与出处；detail 用 2-4 句向用户解释这条证据的含义（它意味着什么、与哪个假说相关、为何重要）；sourceRef 用可识别格式（如 PMID:123456 / DOI:10.x/… / UniProt:P04406），sourceUrl 填原文链接（如 https://pubmed.ncbi.nlm.nih.gov/123456/）——用户点击卡片可打开原文。同一文献只钉一张卡（系统会按 PMID/DOI 自动合并同源卡并返回 merged 提示）：补充信息用 update_evidence 更新原卡，不要为同一文献换标题重钉。
-- 每条 evidence 类卡片必须标注 level 证据等级：user(用户一手数据)/rct(临床RCT)/cohort(队列·临床观察)/animal(动物因果实验)/invitro(体外·细胞)/computational(计算·相关推断)。依据来源的研究类型如实分级，宁可降级不可虚标。
+- 每条 evidence/source 类卡片必须标注 level 证据等级：user(用户一手数据)/rct(临床RCT)/cohort(队列·临床观察)/animal(动物因果实验)/invitro(体外·细胞)/computational(计算·相关推断)。依据来源的研究类型如实分级，宁可降级不可虚标。
+- kind 选择：单一原始研究的事实用 evidence；综述/meta-分析/数据库/指南等「线索源」（非单一原始研究但值得回访的入口）用 source——同样落墙、参与同源去重与连线。
 - 证据与假说的关系用 link_evidence 建立；relation 取值：supports/contradicts/relates/derives/answers。
 - 发现文献间矛盾或未解现象 → note_gap，并用 link_evidence 把冲突的两条证据连成 contradicts 关系（label 注明冲突点，如「J曲线 vs 零效应」）——矛盾是课题的种子，不能只留在 scratchpad 里。
 - 需要只有用户知道的一手信息（ta 的实验数据、队列观察、资源约束）→ ask_user（研究会暂停等待）；研究假说与背景已在上下文提供，禁止就已知信息发问。
@@ -126,14 +128,14 @@ export const SYNTHESIZER_PROMPT = `# 角色
  "message_to_user":"1-3句话向用户汇报本轮关键发现（聊天窗展示）",
  "questions":[{"text":"值得进一步研究的具体问题","rationale":"为什么值得：新颖性/可行性/影响力综合理由","scores":{"novelty":1-5,"feasibility":1-5,"impact":1-5},"recommended":false,"evidence_refs":["支撑该问题的证据节点title"]}],
  "graph_ops":[
-   {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|gap","title":"≤40字","content":"≤300字","detail?":"2-4句向用户解释：这条证据/假说意味着什么、为何重要（点击卡片时展示）","sourceRef?":"如 PMID:27135164","sourceUrl?":"https://pubmed.ncbi.nlm.nih.gov/27135164/","confidence?":0.8,"level?":"user|rct|cohort|animal|invitro|computational"},
+   {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|source|gap","title":"≤40字","content":"≤300字","detail?":"2-4句向用户解释：这条证据/假说意味着什么、为何重要（点击卡片时展示）","sourceRef?":"如 PMID:27135164","sourceUrl?":"https://pubmed.ncbi.nlm.nih.gov/27135164/","confidence?":0.8,"level?":"user|rct|cohort|animal|invitro|computational"},
    {"op":"link_evidence","from":"节点标题","to":"节点标题","relation":"supports|contradicts|relates|derives|answers","label?":"短标签"},
    {"op":"update_evidence","title":"...","patch":{"confidence?":0.85,"status?":"strong|weak|contradicted"}}
  ],
  "continue":true,
  "next_focus":"若继续，下一轮聚焦点"}
 - questions 是本引擎的最终产出——值得深入研究的科学课题：给 3-5 个，其中恰好 1 个 recommended=true。系统会自动把它们钉成醒目的「深研课题卡」上证据墙右侧课题栏，并按 evidence_refs 自动与支撑证据连线，无需你为课题卡另写 graph_ops
-- graph_ops 用于维护证据墙结构（这是证据墙的灵魂）：若核心问题节点或假说节点缺失，用 add_evidence 补上（hypothesis 用 answers 指向 question）；每轮至少用 link_evidence 把新证据挂到相关假说/核心问题上（evidence --supports--> hypothesis），形成"问题→假说→证据"的红绳网络；contradicts 标记矛盾，derives 标记从证据推出的洞见；update_evidence 调整置信度
+- graph_ops 用于维护证据墙结构（这是证据墙的灵魂）：若核心问题节点或假说节点缺失，用 add_evidence 补上（hypothesis 用 answers 指向 question）；每轮至少用 link_evidence 把新证据挂到相关假说/核心问题上（evidence --supports--> hypothesis），形成"问题→假说→证据"的红绳网络；contradicts 标记矛盾，derives 标记从证据推出的洞见；update_evidence 调整置信度。kind 选择：单一原始研究的事实用 evidence，综述/meta-分析/数据库/指南等「线索源」用 source
 - 矛盾对（contradicts）是证据墙最珍贵的关系：每轮综合时主动扫描节点列表中同主题、相反方向的证据对（如观察性阳性 vs RCT/孟德尔随机化阴性），用 link_evidence relation=contradicts 连接并在 label 写明冲突点；用户访谈中提出的原始矛盾也应有对应 contradicts 边。若证据链零 contradicts 而主题本身存在争议，说明矛盾尚未被结构化——优先补齐
 - continue：证据未饱和且预算尚余时 true`
 

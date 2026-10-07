@@ -1,0 +1,84 @@
+// Task 25 E2E 度量采集（会话已完成，从 DB 读全量数据）
+const GW = 'http://localhost:81/api/agent'
+const sid = process.argv[2]
+
+async function main() {
+  const r = await fetch(`${GW}/sessions/${sid}?XTransformPort=3002`)
+  const s = await r.json() as any
+  const nodes: any[] = s.nodes || []
+  const edges: any[] = s.edges || []
+  const acts: any[] = s.activity || []
+  const plan = s.plan
+
+  const byKind: Record<string, number> = {}
+  for (const n of nodes) byKind[n.kind] = (byKind[n.kind] || 0) + 1
+  const byRel: Record<string, number> = {}
+  for (const e of edges) byRel[e.relation] = (byRel[e.relation] || 0) + 1
+
+  const norm = (x: string) => x.toLowerCase().replace(/\s+/g, '')
+  const topicTitles = new Set(nodes.filter((n) => n.kind === 'topic').map((n) => norm(n.title)))
+  const dupTopicPairs = nodes.filter((n) => n.kind !== 'topic' && topicTitles.has(norm(n.title)))
+  const keyOf = (n: any) => {
+    const grab = (v: string) => {
+      const m = /\bpmid[:\s]*(\d{4,9})\b/i.exec(v || '') || /pubmed\.ncbi\.nlm\.nih\.gov\/(\d{4,9})/i.exec(v || '')
+      if (m) return `PMID:${m[1]}`
+      const d = /\bdoi[:\s]*(10\.\d{4,9}\/[^\s"'<>]+)/i.exec(v || '') || /doi\.org\/(10\.\d{4,9}\/[^\s"'<>]+)/i.exec(v || '')
+      if (d) return `DOI:${d[1].replace(/[.,;)]+$/, '').toLowerCase()}`
+      return null
+    }
+    return grab(n.sourceRef || '') || grab(n.sourceUrl || '')
+  }
+  const seen = new Map<string, string>()
+  const dupSource: string[] = []
+  for (const n of nodes.filter((n) => n.kind === 'evidence' || n.kind === 'source')) {
+    const k = keyOf(n)
+    if (!k) continue
+    if (seen.has(k)) dupSource.push(`${k}`)
+    else seen.set(k, n.title)
+  }
+
+  const actCount = (pred: (a: any) => boolean) => acts.filter(pred).length
+  const batchCalls = actCount((a) => a.type === 'tool_call' && a.tool === 'batch_cards')
+  const addCalls = actCount((a) => a.type === 'tool_call' && a.tool === 'add_evidence')
+  const askUser = actCount((a) => a.type === 'tool_call' && a.tool === 'ask_user')
+  const densityGuards = actCount((a) => String(a.summary || '').includes('密度守护'))
+  const pinGuards = actCount((a) => String(a.summary || '').includes('落墙守护'))
+  const promotes = actCount((a) => String(a.summary || '').includes('课题卡升格'))
+  const merges = actCount((a) => String(a.summary || '').includes('同源合并'))
+  const hunter = actCount((a) => String(a.summary || '').includes('矛盾猎手'))
+  const batchSummaries = acts.filter((a) => a.type === 'notice' && String(a.summary || '').includes('批量落墙')).map((a) => a.summary)
+
+  const doneTasks = (plan?.tasks || []).filter((t: any) => t.done)
+  const wallPins = (byKind.evidence || 0) + (byKind.source || 0)
+
+  console.log('========== E2E 度量（第八领域：膳食饱和脂肪-CVD）==========')
+  console.log(`标题: ${s.session?.title}`)
+  console.log(`预算: ${s.stats?.stepsUsed}/${s.stats?.maxSteps} 步, ${Math.round((s.stats?.elapsedMs || 0) / 60000)} 分钟, ${s.stats?.llmCalls} 次 LLM`)
+  console.log(`节点 ${nodes.length}: ${JSON.stringify(byKind)}`)
+  console.log(`边 ${edges.length}: ${JSON.stringify(byRel)}`)
+  console.log(`任务完成: ${doneTasks.length}/${(plan?.tasks || []).length}`)
+  for (const t of plan?.tasks || []) console.log(`  - [${t.done ? '✓' : ' '}] ${t.goal}`)
+  console.log(`证据密度: ${(doneTasks.length ? (wallPins / doneTasks.length).toFixed(2) : 'n/a')} 卡/任务 (evidence+source=${wallPins})`)
+  console.log(`工具使用: batch_cards=${batchCalls}, add_evidence=${addCalls}, ask_user=${askUser}`)
+  console.log(`守护事件: 密度=${densityGuards}, 落墙=${pinGuards}, 升格=${promotes}, 同源合并=${merges}, 矛盾猎手=${hunter}`)
+  if (batchSummaries.length) console.log(`批量落墙明细:\n  ${batchSummaries.join('\n  ')}`)
+  console.log(`同题 topic↔非topic 双卡对: ${dupTopicPairs.length}${dupTopicPairs.length ? ' → ' + dupTopicPairs.map((n) => `${n.title}(${n.kind})`).join(' / ') : ' ✅'}`)
+  console.log(`同源重复卡: ${dupSource.length}${dupSource.length ? ' → ' + dupSource.join(', ') : ' ✅'}`)
+  console.log(`课题卡 ${(s.questions || []).length} 张:`)
+  for (const q of s.questions || []) console.log(`  - ${q.recommended ? '⭐' : ' '} ${q.text.slice(0, 60)} [N${q.scores?.novelty}F${q.scores?.feasibility}I${q.scores?.impact}]`)
+  console.log(`contradicts 边:`)
+  for (const e of edges.filter((x) => x.relation === 'contradicts')) {
+    const src = nodes.find((n) => n.id === e.source)
+    const dst = nodes.find((n) => n.id === e.target)
+    console.log(`  - ${src?.title?.slice(0, 38)} ⇄ ${dst?.title?.slice(0, 38)} (${e.label || '无label'})`)
+  }
+  console.log(`narrative: ${(s.narrative || '').length} 字`)
+  const pmids = [...new Set(((s.narrative || '') + ' ' + nodes.map((n) => `${n.sourceRef || ''} ${n.content || ''}`).join(' ')).match(/\b\d{7,8}\b/g) || [])]
+  console.log(`全部 PMID 引用: ${pmids.join(', ')}`)
+  console.log(`evidence/source 卡 level 分布:`)
+  const lv: Record<string, number> = {}
+  for (const n of nodes.filter((n) => n.kind === 'evidence' || n.kind === 'source')) lv[n.level || 'null'] = (lv[n.level || 'null'] || 0) + 1
+  console.log(`  ${JSON.stringify(lv)}`)
+}
+
+main().catch((e) => { console.error(e); process.exit(1) })

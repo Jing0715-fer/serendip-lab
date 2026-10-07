@@ -61,3 +61,4 @@ download/
 .zscripts/
 /db/
 .task-tmp/
+.tb-screens/

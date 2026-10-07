@@ -23,7 +23,7 @@ const EXTERNAL_TOOL_NAMES = [
   'uniprot_search', 'ncbi_gene', 'pdb_search', 'taxonomy_search',
   'clinvar_search', 'web_search', 'web_read',
 ]
-const GRAPH_TOOL_NAMES = ['add_evidence', 'link_evidence', 'update_evidence', 'note_gap', 'ask_user', 'finish_task']
+const GRAPH_TOOL_NAMES = ['add_evidence', 'batch_cards', 'link_evidence', 'update_evidence', 'note_gap', 'ask_user', 'finish_task']
 
 /** 访谈就绪后自动开启自主调研的延迟：留一小窗口给用户继续补充/细化需求 */
 const AUTO_START_DELAY_MS = 6_000
@@ -621,9 +621,12 @@ export class AgentRuntime {
     let parseFails = 0
     let llmFails = 0
     const stepCap = this.budgetTight() ? 5 : 8
-    // 落墙守护（P1）：任务开始时的 evidence 卡数基准——finish 时若零新增且有检索成果，给一次抢救机会
-    const evBefore = listNodes(this.sessionId).filter((n) => n.kind === 'evidence').length
+    // 落墙守护（P1）：任务开始时的证据卡数基准——finish 时若零新增且有检索成果，给一次抢救机会
+    // Task 25：source 卡同样计入落墙（线索源也是墙上的研究成果）；密度守护追踪本任务新钉卡数
+    const wallPinCount = () => listNodes(this.sessionId).filter((n) => n.kind === 'evidence' || n.kind === 'source').length
+    const evBefore = wallPinCount()
     let rescueUsed = false
+    let densityNudged = false
     // Task 22：主步数用尽后追加 ≤3 轮补落窗口（仅在检索成果尚未落墙时开启，落墙即止）
     for (let step = 0; step < stepCap + 3; step++) {
       if (!this.budgetOK() || this.stopFlag) break
@@ -711,6 +714,26 @@ export class AgentRuntime {
             'Evidence-pin guard: retrieved results not yet pinned — asked to add evidence cards before closing') })
           continue
         }
+        // Task 25 密度守护：仅钉 ≤1 张卡但检索/精读 ≥2 次 → 一次性督促补落（拒绝无理由的低密度收官；
+        // 摸底型任务可在 summary 说明后直接二次 finish 通过）
+        if (!densityNudged) {
+          const newPins = wallPinCount() - evBefore
+          const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
+          const bNow = getBudget(this.sessionId)
+          if (newPins <= 1 && searches >= 2 && bNow.maxSteps - bNow.stepsUsed >= 4) {
+            densityNudged = true
+            insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+              `密度守护：本任务 ${searches} 次检索仅钉 ${newPins} 张卡，已要求补落后再收官`,
+              `Density guard: only ${newPins} card(s) pinned after ${searches} searches — asked to pin more before closing`) })
+            scratchpad.push({
+              thought: '任务收尾密度自检：证据卡不足',
+              action: { tool: 'finish_task', args: {} },
+              observation:
+                `SYSTEM: 本任务至今只钉了 ${newPins} 张证据卡，但研究历史中有 ${searches} 次检索/精读——若其中还有 ≥1 条值得保留的关键事实（不同文献分卡，含 PMID/DOI、level 证据等级与 detail 解释），请用 batch_cards 一次补落（2-4 张，可附 links 连线）后再 finish_task；若确属摸底型任务且无更多可落，直接 finish_task 并在 summary 中写明检索结论。`,
+            })
+            continue
+          }
+        }
         task.done = true
         task.summary = String(args.summary || '').slice(0, 400)
         this.persistTask(task)
@@ -748,7 +771,7 @@ export class AgentRuntime {
 
   /** 落墙守护判定：全程零新增 evidence 卡 + scratchpad 里有真实检索成果 + 预算还够补落（≥3 步） */
   private needsEvidenceRescue(evBefore: number, scratchpad: ScratchEntry[]): boolean {
-    const evNow = listNodes(this.sessionId).filter((n) => n.kind === 'evidence').length
+    const evNow = listNodes(this.sessionId).filter((n) => n.kind === 'evidence' || n.kind === 'source').length
     if (evNow > evBefore) return false
     if (!this.budgetOK()) return false
     const b = getBudget(this.sessionId)
@@ -804,6 +827,7 @@ export class AgentRuntime {
   // ---------- 图操作工具（直接落库） ----------
   private runGraphTool(toolName: string, args: any): unknown | null {
     if (toolName === 'add_evidence') return this.toolAddEvidence(args)
+    if (toolName === 'batch_cards') return this.toolBatchCards(args)
     if (toolName === 'link_evidence') return this.toolLinkEvidence(args)
     if (toolName === 'update_evidence') return this.toolUpdateEvidence(args)
     if (toolName === 'note_gap') return this.toolNoteGap(args)
@@ -880,6 +904,40 @@ export class AgentRuntime {
     insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '新增证据节点', 'New card pinned')} [${kind}] ${node.title}` })
     this.emitState()
     return { ok: true, nodeId: node.id, title: node.title }
+  }
+
+  /**
+   * Task 25 证据密度：一次批量落多张卡 + 连线。
+   * 动机：每个 ReAct 步骤只做一个动作，逐张 add_evidence 会耗尽步数预算（上代 1.8 卡/任务）；
+   * batch_cards 让一个步骤产出 2-6 张卡，密度与步数利用率同步提升。内部复用 toolAddEvidence
+   * （自动享受同题更新 + 同源合并防线）与 toolLinkEvidence（同名守卫 + 方向矫正）。
+   */
+  private toolBatchCards(args: any) {
+    const cards = Array.isArray(args.cards) ? args.cards.slice(0, 6) : []
+    const links = Array.isArray(args.links) ? args.links.slice(0, 6) : []
+    if (!cards.length && !links.length) {
+      return { error: 'batch_cards 需要 cards 数组（每项为 add_evidence 的参数，≤6 张），可选 links 数组（每项为 link_evidence 的参数，≤6 条）' }
+    }
+    const results: unknown[] = []
+    let pinned = 0
+    let merged = 0
+    for (const c of cards) {
+      const r = this.toolAddEvidence(c || {})
+      results.push(r)
+      if ((r as any)?.ok) pinned++
+      if ((r as any)?.merged) merged++
+    }
+    let linked = 0
+    for (const l of links) {
+      const r = this.toolLinkEvidence(l || {})
+      results.push(r)
+      if ((r as any)?.ok) linked++
+    }
+    insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+      `批量落墙：${pinned} 张卡（含合并 ${merged}）+ ${linked} 条连线`,
+      `Batch pin: ${pinned} card(s) (${merged} merged) + ${linked} link(s)`) })
+    this.emitState()
+    return { ok: true, pinned, merged, linked, results }
   }
 
   private toolLinkEvidence(args: any) {
@@ -1353,6 +1411,18 @@ export class AgentRuntime {
         updateNode(this.sessionId, existing.id, { content, tags, starred: !!q.recommended })
         updateNodeContent(this.sessionId, existing.id, content, null, null, null, detail)
         nodeId = existing.id
+      } else if (existing && ['hypothesis', 'insight', 'gap', 'question'].includes(existing.kind)) {
+        // Task 25 同题吸收：墙上已有同题假说/洞见/空白卡 → 复用其 id 升格为课题卡。
+        // 上代行为是另插一张课题卡 → 同题双卡并存（语义重复）；吸收后连线/位置全保留，课题栏成为唯一本体。
+        updateNode(this.sessionId, existing.id, { kind: 'topic', content, tags, starred: !!q.recommended })
+        updateNodeContent(this.sessionId, existing.id, content, null, null, null, detail)
+        nodeId = existing.id
+        insertActivity(this.sessionId, {
+          type: 'notice',
+          summary: L(this.sessionId,
+            `课题卡升格：同题「${oneLine(title, 40)}」${existing.kind} 卡已升格为课题卡（保留原连线）`,
+            `Topic promoted: same-titled ${existing.kind} card “${oneLine(title, 40)}” promoted into the research topic card (existing links kept)`),
+        })
       } else {
         const node = insertNode(this.sessionId, {
           kind: 'topic',

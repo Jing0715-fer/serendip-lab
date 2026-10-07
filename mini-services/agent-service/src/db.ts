@@ -736,7 +736,7 @@ export function findNodeBySourceKey(sessionId: string, key: string): BoardNode |
   return null
 }
 
-export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pick<BoardNode, 'confidence' | 'content' | 'status' | 'tags' | 'title' | 'starred' | 'level'>>) {
+export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pick<BoardNode, 'confidence' | 'content' | 'status' | 'tags' | 'title' | 'starred' | 'level' | 'kind'>>) {
   const sets: string[] = []
   const vals: any[] = []
   if (patch.confidence !== undefined) { sets.push('confidence=?'); vals.push(patch.confidence) }
@@ -746,6 +746,8 @@ export function updateNode(sessionId: string, nodeId: string, patch: Partial<Pic
   if (patch.title !== undefined) { sets.push('title=?'); vals.push(patch.title.slice(0, 60)) }
   if (patch.starred !== undefined) { sets.push('starred=?'); vals.push(patch.starred ? 1 : 0) }
   if (patch.level !== undefined) { sets.push('level=?'); vals.push(patch.level != null && EVIDENCE_LEVELS.includes(patch.level) ? patch.level : null) }
+  // Task 25：kind 升格支持（同题假说卡 → 课题卡吸收复用），仅接受合法枚举
+  if (patch.kind !== undefined && NODE_KINDS.includes(patch.kind)) { sets.push('kind=?'); vals.push(patch.kind) }
   if (!sets.length) return
   db.run(`UPDATE nodes SET ${sets.join(',')}, updated_at=${now()} WHERE id=? AND session_id=?`, [...vals, nodeId, sessionId])
 }
