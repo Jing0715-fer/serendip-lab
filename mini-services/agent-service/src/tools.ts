@@ -67,6 +67,18 @@ function eutils<T>(fn: () => Promise<T>): Promise<T> {
 
 const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils'
 
+/**
+ * Task 26：零命中自愈提示——附在空检索结果里，帮模型下一步直接放宽检索式，
+ * 省掉上代实证的「换词→再零命中→再换词」试错步数浪费（饱和脂肪 E2E 中可见连续 total:0 循环）。
+ */
+function emptySearchHint(query: string): string {
+  const tips: string[] = []
+  if (/\b(AND|OR|NOT)\b/i.test(query)) tips.push('去掉部分 AND/OR 子句（复合布尔式是零命中最常见原因）')
+  if (query.length > 60) tips.push('缩短检索式，只保留 2-3 个核心概念')
+  tips.push('换同义词或更宽的上位词（如具体分子名→类名、缩写→全称）')
+  return `0 命中建议：${tips.join('；')}；或改用 europepmc_search / openalex_search 交叉检索`
+}
+
 // ---------- 工具实现 ----------
 async function pubmedSearch(args: { query: string; max?: number }) {
   const query = String(args.query || '').trim()
@@ -77,7 +89,7 @@ async function pubmedSearch(args: { query: string; max?: number }) {
   )
   const ids: string[] = es?.esearchresult?.idlist || []
   const total = Number(es?.esearchresult?.count || 0)
-  if (!ids.length) return { tool: 'pubmed_search', query, total: 0, results: [], note: '用 pubmed_fetch 获取摘要' }
+  if (!ids.length) return { tool: 'pubmed_search', query, total: 0, results: [], note: emptySearchHint(query) }
   const sum = await eutils(() => getJson(`${EUTILS}/esummary.fcgi?db=pubmed&retmode=json&id=${ids.join(',')}`))
   const results = ids.map((pmid) => {
     const r = sum?.result?.[pmid] || {}
@@ -132,6 +144,7 @@ async function europepmcSearch(args: { query: string; max?: number }) {
     citations: Number(r?.citedByCount || 0),
     openAccess: r?.isOpenAccess === 'Y' || r?.isOpenAccess === true,
   }))
+  if (!results.length) return { total: 0, results: [], note: emptySearchHint(query) }
   return { total: Number(j?.hitCount || 0), results }
 }
 
@@ -149,6 +162,7 @@ async function openalexSearch(args: { query: string; max?: number }) {
     journal: w?.primary_location?.source?.display_name || '',
     doi: w?.doi || '',
   }))
+  if (!results.length) return { results: [], note: emptySearchHint(query) }
   return { results }
 }
 

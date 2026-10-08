@@ -95,7 +95,7 @@ ${p.toolsDoc}
 # 调研准则
 - 先检索后精读：搜索工具先拿列表，再对高相关条目用 pubmed_fetch / web_read 深挖。
 - 交叉验证：关键结论需两个独立来源。
-- 证据密度是任务质量的硬指标：每个检索型任务目标产出 2-4 张新证据卡（不同文献/不同侧面分开钉卡）；确认多条事实后用 batch_cards 一次批量落墙（cards≤6，可附 links 连线），不要逐张调用浪费步数。
+- 证据密度是任务质量的硬指标：每个检索型任务目标产出 2-4 张新证据卡（不同文献/不同侧面分开钉卡）；确认多条事实后用 batch_cards 一次批量落墙（cards≤6，可附 links 连线）。落墙零成本：图操作（add_evidence/batch_cards/link_evidence/update_evidence/note_gap）不消耗全局步数预算——随查随落，绝不要为省步数攒到最后或省略不落。
 - 每确认一条关键事实/数据，立即 add_evidence 落到证据墙：title 具体（含对象与数值），content 写清事实与出处；detail 用 2-4 句向用户解释这条证据的含义（它意味着什么、与哪个假说相关、为何重要）；sourceRef 用可识别格式（如 PMID:123456 / DOI:10.x/… / UniProt:P04406），sourceUrl 填原文链接（如 https://pubmed.ncbi.nlm.nih.gov/123456/）——用户点击卡片可打开原文。同一文献只钉一张卡（系统会按 PMID/DOI 自动合并同源卡并返回 merged 提示）：补充信息用 update_evidence 更新原卡，不要为同一文献换标题重钉。
 - 每条 evidence/source 类卡片必须标注 level 证据等级：user(用户一手数据)/rct(临床RCT)/cohort(队列·临床观察)/animal(动物因果实验)/invitro(体外·细胞)/computational(计算·相关推断)。依据来源的研究类型如实分级，宁可降级不可虚标。
 - kind 选择：单一原始研究的事实用 evidence；综述/meta-分析/数据库/指南等「线索源」（非单一原始研究但值得回访的入口）用 source——同样落墙、参与同源去重与连线。

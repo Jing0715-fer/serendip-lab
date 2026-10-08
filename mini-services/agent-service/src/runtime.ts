@@ -714,13 +714,13 @@ export class AgentRuntime {
             'Evidence-pin guard: retrieved results not yet pinned — asked to add evidence cards before closing') })
           continue
         }
-        // Task 25 密度守护：仅钉 ≤1 张卡但检索/精读 ≥2 次 → 一次性督促补落（拒绝无理由的低密度收官；
-        // 摸底型任务可在 summary 说明后直接二次 finish 通过）
+        // Task 25 密度守护（Task 26 重校准：落墙免费后阈值从 ≤1/≥2 提至 ≤2/≥3）：
+        // 检索型任务检索 ≥3 次却仅钉 ≤2 张卡 → 一次性督促补落；摸底型任务可在 summary 说明后直接二次 finish 通过
         if (!densityNudged) {
           const newPins = wallPinCount() - evBefore
           const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
           const bNow = getBudget(this.sessionId)
-          if (newPins <= 1 && searches >= 2 && bNow.maxSteps - bNow.stepsUsed >= 4) {
+          if (newPins <= 2 && searches >= 3 && bNow.maxSteps - bNow.stepsUsed >= 2) {
             densityNudged = true
             insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
               `密度守护：本任务 ${searches} 次检索仅钉 ${newPins} 张卡，已要求补落后再收官`,
@@ -729,7 +729,7 @@ export class AgentRuntime {
               thought: '任务收尾密度自检：证据卡不足',
               action: { tool: 'finish_task', args: {} },
               observation:
-                `SYSTEM: 本任务至今只钉了 ${newPins} 张证据卡，但研究历史中有 ${searches} 次检索/精读——若其中还有 ≥1 条值得保留的关键事实（不同文献分卡，含 PMID/DOI、level 证据等级与 detail 解释），请用 batch_cards 一次补落（2-4 张，可附 links 连线）后再 finish_task；若确属摸底型任务且无更多可落，直接 finish_task 并在 summary 中写明检索结论。`,
+                `SYSTEM: 本任务至今只钉了 ${newPins} 张证据卡，但研究历史中有 ${searches} 次检索/精读——图操作（add_evidence/batch_cards/link_evidence）不消耗全局步数预算，落墙零成本。若其中还有 ≥1 条值得保留的关键事实（不同文献分卡，含 PMID/DOI、level 证据等级与 detail 解释），请用 batch_cards 一次补落（2-4 张，可附 links 连线）后再 finish_task；若确属摸底型任务且无更多可落，直接 finish_task 并在 summary 中写明检索结论。`,
             })
             continue
           }
@@ -757,9 +757,14 @@ export class AgentRuntime {
       const obs = await this.runTool(toolName, args, step)
       scratchpad.push({ thought, action: { tool: toolName, args }, observation: truncObs(obs) })
 
-      const b = getBudget(this.sessionId)
-      b.stepsUsed++
-      saveBudget(this.sessionId, b)
+      // Task 26 落墙免计费：纯图操作（落卡/连线/更新/记空白）不消耗全局步数预算——
+      // 上代实证（饱和脂肪-CVD）：模型「舍不得」用步数落卡（密度 1.2 卡/任务），检索换词重试反而吃光预算。
+      // 仍占任务级 stepCap（for 循环上限）防失控；外部检索/精读照常计费。
+      if (!GRAPH_TOOL_NAMES.includes(toolName)) {
+        const b = getBudget(this.sessionId)
+        b.stepsUsed++
+        saveBudget(this.sessionId, b)
+      }
       this.persistStep()
     }
     // 达到步数上限也算完成（summary 可为空）
@@ -1246,7 +1251,7 @@ export class AgentRuntime {
       remainingMinutes: Math.max(0, Math.round((b.maxMinutes * 60_000 - (b.startedAt ? now() - b.startedAt : b.elapsedMs)) / 60_000)),
       langDirective: langDirective(getSessionLang(this.sessionId)),
     })
-    const userPrompt = `# 研究历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence 落到证据墙（预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
+    const userPrompt = `# 研究历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence / batch_cards 落到证据墙（图操作不消耗全局步数预算，落墙零成本；预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
     const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm(), { face: 'investigator' })
     if (!res.ok) {
       // P2 修复：直接读结构化 kind，不再靠中文错误文案正则耦合（llm.ts 改文案不影响熔断分类）
