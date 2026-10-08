@@ -296,6 +296,26 @@ export class AgentRuntime {
     return b.maxSteps - b.stepsUsed < 6 || b.maxMinutes * 60_000 - elapsed < 4 * 60_000
   }
 
+  /**
+   * Task 28 P1-②：方向相反证据对的确定性检测（纯文本启发式，finish_task 前一次性核对）。
+   * 命中条件：本任务研究历史同时出现「获益/保护向」与「损害/无效向」的效应表述——
+   * 观察性获益 vs 孟德尔随机化零因果、干预获益 vs 出血/死亡风险升高等经典悖论形态。
+   * 背景：investigator 矛盾即时落边准则经 Task 26/27 两轮 prompt 强化仍有机落边为 0，
+   * 猎手兑底虽能补齐但时机滞后（最终综合后）——改在任务收口点确定性触发。
+   * 误报成本低：提示可被模型判为无关措辞重叠而拒绝，二次 finish_task 直接过（与密度守护同语义）。
+   */
+  private oppositeEvidencePairs(scratchpad: ScratchEntry[]): boolean {
+    const text = scratchpad
+      .map((s) => `${s.observation || ''}\n${s.thought || ''}`)
+      .join('\n')
+      .toLowerCase()
+      .slice(0, 30_000)
+    if (!text) return false
+    const benefit = /(reduced|lower|decreased|protect\w+|beneficial|improv\w+)\s+(risk|mortality|incidence|death|odds)|protective association|降低(风险|死亡|发病率|发生率)|保护(作用|效应)|获益/.test(text)
+    const harm = /(increased|elevated|higher|raised)\s+(risk|mortality|incidence|death|odds)|no (significant |causal )?(association|effect|benefit|reduction)|null (finding|effect|association)|增加(风险|死亡|发病率|发生率)|无(因果|关联|获益|保护作用)|有害/.test(text)
+    return benefit && harm
+  }
+
   private persistStep() {
     // checkpoint：预算 + 计划（任务 done 状态）落库，然后广播全量 state
     const b = getBudget(this.sessionId)
@@ -563,10 +583,18 @@ export class AgentRuntime {
       this.drainSteering()
 
       if (tasksSinceSynth >= 2 || stepsSinceSynth >= 10) {
-        await this.callSynthesizer(false)
+        // Task 28 P2-④：预算紧张时跳过阶段性综合——收官必有最终综合兜底，
+        // 尾段把墙钟留给调研循环（第十领域实证：一次中途综合 ~1 分钟，恰是尾段能再完成半个任务的量）
+        if (this.budgetTight()) {
+          insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+            '预算紧张：跳过本轮阶段性综合，把时间留给调研（收官时统一综合）',
+            'Budget tight: skipping this interim synthesis to leave time for research (the final synthesis will cover it)') })
+        } else {
+          await this.callSynthesizer(false)
+          if (this.stopFlag) return 'stopped'
+        }
         tasksSinceSynth = 0
         stepsSinceSynth = 0
-        if (this.stopFlag) return 'stopped'
       }
     }
 
@@ -648,25 +676,52 @@ export class AgentRuntime {
     const evBefore = wallPinCount()
     let rescueUsed = false
     let densityNudged = false
-    // Task 22：主步数用尽后追加 ≤3 轮补落窗口（仅在检索成果尚未落墙时开启，落墙即止）
-    for (let step = 0; step < stepCap + 3; step++) {
+    // Task 28 P1-②：本任务 contradicts 落边基准——收口时零新增且检测到反向证据对 → 一次性结构化提示
+    const contradictBefore = listEdges(this.sessionId).filter((e) => e.relation === 'contradicts').length
+    let contradictsNudged = false
+    // 两处收口点（finish_task 分支 + 步数上限窗口）共用的矛盾自检提示文案
+    const CONTRADICT_HINT =
+      'SYSTEM: 自检发现本任务的研究历史中同时出现「获益/保护方向」与「损害/无效方向」的证据表述，但证据墙在本任务中没有新增任何 contradicts 边。若这确属同一问题上的相反结论（例如：观察性研究显示降低风险 vs 孟德尔随机化显示无因果关联），请先用 link_evidence（relation=contradicts，from/to 为两张证据卡的 id，label 一句话点明冲突点）把这对冲突结构化，再 finish_task；若只是不同问题/不同暴露的措辞重叠（并非真正的结论对立），直接 finish_task 即可。'
+    // Task 22：主步数用尽后追加 ≤4 轮收口窗口（落墙 + 矛盾自检）；Task 28：+3 → +4 给两项注入各留位
+    for (let step = 0; step < stepCap + 4; step++) {
       if (!this.budgetOK() || this.stopFlag) break
       await this.waitIfPaused()
       if (this.stopFlag) break
 
-      // 步数上限落墙守护：主窗口结束仍零落墙且有检索成果 → 注入系统指令引导补落（每任务仅注入一次）
+      // 步数上限收口自检（Task 22 落墙守护 + Task 28 矛盾自检）：主窗口结束时有未了事项 → 注入系统指令（每项仅一次）。
+      // Task 28 P1-② 修复：第十一领域 E2E 实证 5/5 任务全部经本路径收口（模型用满 10 步检索、
+      // 补落窗口落卡后 break→fallback done），finish_task 分支的钩子从未被走到——
+      // 矛盾自检必须同时挂在本收口路径上，否则形同虚设；窗口 +4 轮给落墙+矛盾两项注入留位
       if (step >= stepCap) {
-        if (!this.needsEvidenceRescue(evBefore, scratchpad)) break
-        if (!rescueUsed) {
-          rescueUsed = true
+        const needPin = this.needsEvidenceRescue(evBefore, scratchpad)
+        const needContradict = !contradictsNudged
+          && listEdges(this.sessionId).filter((e) => e.relation === 'contradicts').length === contradictBefore
+          && wallPinCount() >= 2
+          && this.oppositeEvidencePairs(scratchpad)
+        if (!needPin && !needContradict) break
+        if (needPin) {
+          if (!rescueUsed) {
+            rescueUsed = true
+            insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+              '落墙守护：步数达到上限但检索成果尚未上墙，追加补落窗口（≤4 步）',
+              'Evidence-pin guard: step cap reached with unpinned results — extending a pinning window (≤4 steps)') })
+            scratchpad.push({
+              thought: '步数达到上限，任务收尾自检：证据墙未新增卡片',
+              action: { tool: '__step_cap__', args: {} },
+              observation:
+                'SYSTEM: 步数已达上限。本任务检索到的关键事实尚未落到证据墙——请立即用 add_evidence 把已确认的关键事实落墙（1-3 张，含 PMID/DOI 来源、level 证据等级、detail 两句解释），随后 finish_task 收尾。不要发起新的检索。',
+            })
+          }
+        } else if (needContradict) {
+          // 落墙已完成、仅剩冲突未结构化 → 注入矛盾提示续窗 1 轮
+          contradictsNudged = true
           insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
-            '落墙守护：步数达到上限但检索成果尚未上墙，追加补落窗口（≤3 步）',
-            'Evidence-pin guard: step cap reached with unpinned results — extending a pinning window (≤3 steps)') })
+            '矛盾自检：研究历史出现方向相反的证据表述但本任务未落 contradicts 边，已提示结构化冲突对',
+            'Contradiction self-check: opposite-direction evidence found with no contradicts edge added this task — asked to structure the pair') })
           scratchpad.push({
-            thought: '步数达到上限，任务收尾自检：证据墙未新增卡片',
+            thought: '步数达到上限，任务收尾自检：方向相反证据未结构化',
             action: { tool: '__step_cap__', args: {} },
-            observation:
-              'SYSTEM: 步数已达上限。本任务检索到的关键事实尚未落到证据墙——请立即用 add_evidence 把已确认的关键事实落墙（1-3 张，含 PMID/DOI 来源、level 证据等级、detail 两句解释），随后 finish_task 收尾。不要发起新的检索。',
+            observation: CONTRADICT_HINT,
           })
         }
       }
@@ -762,6 +817,24 @@ export class AgentRuntime {
               action: { tool: 'finish_task', args: {} },
               observation:
                 `SYSTEM: 本任务至今只钉了 ${newPins} 张证据卡，但研究历史中有 ${searches} 次检索/精读——图操作（add_evidence/batch_cards/link_evidence）不消耗全局步数预算，落墙零成本。若其中还有 ≥1 条值得保留的关键事实（不同文献分卡，含 PMID/DOI、level 证据等级与 detail 解释），请用 batch_cards 一次补落（2-4 张，可附 links 连线）后再 finish_task；若确属摸底型任务且无更多可落，直接 finish_task 并在 summary 中写明检索结论。`,
+            })
+            continue
+          }
+        }
+        // Task 28 P1-② 有机矛盾钩子（确定性兜底，每任务一次）：本任务零 contradicts 落边
+        // 且研究历史同时出现获益向与损害/无效向表述 → 一次性结构化提示（模型可判为
+        // 无关措辞重叠而拒绝，二次 finish_task 直接过；墙上 ≥2 张卡才有可能落 contradicts 边）
+        if (!contradictsNudged) {
+          const contradictsNow = listEdges(this.sessionId).filter((e) => e.relation === 'contradicts').length
+          if (contradictsNow === contradictBefore && wallPinCount() >= 2 && this.oppositeEvidencePairs(scratchpad)) {
+            contradictsNudged = true
+            insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+              '矛盾自检：研究历史出现方向相反的证据表述但本任务未落 contradicts 边，已提示结构化冲突对',
+              'Contradiction self-check: opposite-direction evidence found with no contradicts edge added this task — asked to structure the pair') })
+            scratchpad.push({
+              thought: '任务收尾矛盾自检：方向相反证据未结构化',
+              action: { tool: 'finish_task', args: {} },
+              observation: CONTRADICT_HINT,
             })
             continue
           }
@@ -1318,6 +1391,13 @@ export class AgentRuntime {
   async callSynthesizer(final: boolean): Promise<SynthOut | null> {
     this.setPhase('synthesizing', 'thinking')
     this.lastSynthError = null // 每次进入时重置；仅本次调用失败时写入
+    // Task 28 P2-③：最终综合开始事件——第十领域实证 429 风暴期间前端 ~7 分钟只见 synthesizing 无任何事件；
+    // 开始/重试均有活动后，用户能看到“它在退避重试”而非“它挂了”
+    if (final) {
+      insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+        '最终综合：正在基于证据墙生成研究综述（遇 API 限流会自动退避重试；失败转为延迟收官自动补齐，研究数据不丢失）',
+        'Final synthesis: generating the research review from the evidence wall (auto-retries on rate limits; falls back to deferred finalization on failure — no data loss)') })
+    }
     const plan = getPlan(this.sessionId)
     const nodes = listNodes(this.sessionId)
     const edges = listEdges(this.sessionId)
@@ -1348,8 +1428,11 @@ export class AgentRuntime {
 
     const res0 = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), {
       face: 'synthesizer',
-      // Task 27 P1-①：中途综合的内层退避耐心受剩余预算钳制（≤剩余 1/3）；最终综合不受限（收官关键调用，失败有延迟收官兜底）
-      ...(final ? {} : { maxTotalWaitMs: clamp(this.remainingMs() / 3, 8_000, 240_000) }),
+      // Task 27 P1-①：中途综合的内层退避耐心受剩余预算钳制（≤剩余 1/3）；
+      // Task 28 P2-③：最终综合内层耐心也上 90s 保底上限——原全量阶梯（8/25/60/120s ≈3.5 分钟/次）
+      // 叠加外层 2 轮重试最坏 ~11 分钟且 429 风暴期间全程无事件；延迟收官兜底已验证可靠，
+      // 更快转 pendingFinal（横幅可见 + sweeper 自动补）优于长时间静默等待
+      maxTotalWaitMs: final ? 90_000 : clamp(this.remainingMs() / 3, 8_000, 240_000),
     })
     // 研究综述是关键调用：退避重试（429 限流常见），最多 3 轮
     // Task 27 P1-①：中途综合的重试等待与剩余预算挂钩（≤剩余 1/3）；最终综合保持原 20s/40s 阶梯
@@ -1365,7 +1448,7 @@ export class AgentRuntime {
         await sleep(waitMs)
         res = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), {
           face: 'synthesizer',
-          ...(final ? {} : { maxTotalWaitMs: clamp(this.remainingMs() / 3, 8_000, 240_000) }),
+          maxTotalWaitMs: final ? 90_000 : clamp(this.remainingMs() / 3, 8_000, 240_000),
         })
         if (res.ok) break
       }
