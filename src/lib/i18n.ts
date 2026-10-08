@@ -62,7 +62,7 @@ const DICT = {
   'menu.confirmDelete': ['确认删除「{title}」？此操作不可撤销。', 'Delete “{title}”? This cannot be undone.'],
   'menu.evidenceCount': ['{n} 证据', '{n} cards'],
   'phase.done': ['已完成', 'Completed'],
-  'steps.title': ['步骤 {used}/{max}', 'Step {used}/{max}'],
+  'steps.title': ['检索步 {used}/{max}（落墙零成本，不计数）', 'Search steps {used}/{max} (pinning is free)'],
   'sse.ok': ['实时连接正常', 'Live connection OK'],
   'sse.down': ['实时连接断开，正在重连…', 'Connection lost — reconnecting…'],
   'research.start': ['开始研究', 'Start Research'],
@@ -137,7 +137,7 @@ const DICT = {
   'chat.synthesisBadge': ['研究综述', 'Research review'],
   'chat.steerBadge': ['素材补充 · Agent 将在检查点纳入', 'Note added · folded in at the next checkpoint'],
   'chat.liveTitle': ['Agent 工作中', 'Agent at work'],
-  'chat.liveSteps': ['{used}/{max} 步', '{used}/{max} steps'],
+  'chat.liveSteps': ['{used}/{max} 检索步', '{used}/{max} search steps'],
   'chat.liveLog': ['全程记录', 'Full log'],
   'chat.liveDeploying': ['正在规划下一步…', 'Planning the next move…'],
   'chat.ctaStart': ['进入自主研究', 'Start autonomous research'],
@@ -302,7 +302,7 @@ const DICT = {
   'topic.exploreOpen': ['打开探索面板（方案 · 反馈推导 · 下一步方向）', 'Open the exploration panel (plan · feedback reasoning · next steps)'],
 
   /* 活动日志 */
-  'act.steps': ['研究步数', 'Steps'],
+  'act.steps': ['检索步数 · 落墙零成本', 'Search steps · pinning free'],
   'act.toolCalls': ['工具调用', 'Tool calls'],
   'act.llmCalls': ['LLM 推理', 'LLM calls'],
   'act.evidence': ['证据节点', 'Evidence cards'],
@@ -372,8 +372,8 @@ const DICT = {
   ],
   'rd.budget': ['研究预算', 'Research budget'],
   'rd.budgetNote': [
-    '研究期间你可随时补充素材或暂停；Agent 遇到只有你知道的关键信息时会主动提问。',
-    'You can add notes or pause anytime; the agent will ask when it needs something only you know.',
+    '步数仅统计检索/精读等外部操作，证据卡落墙与连线零成本不计数；研究期间可随时补充素材或暂停，Agent 遇到只有你知道的关键信息时会主动提问。',
+    'Steps count external search/read actions only — pinning cards and linking are free. You can add notes or pause anytime; the agent will ask when it needs something only you know.',
   ],
   'rd.cancel': ['取消', 'Cancel'],
   'rd.launch': ['启动研究', 'Launch'],

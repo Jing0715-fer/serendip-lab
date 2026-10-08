@@ -15,7 +15,7 @@ import { fmt, useI18n, useT } from '@/lib/i18n';
 
 const STEP_OPTIONS: { value: number; label: { zh: string; en: string }; hint: { zh: string; en: string } }[] = [
   { value: 24, label: { zh: '快速摸底', en: 'Quick scan' }, hint: { zh: '约 24 步 · 5 分钟', en: '~24 steps · 5 min' } },
-  { value: 40, label: { zh: '标准调研', en: 'Standard' }, hint: { zh: '约 40 步 · 15 分钟', en: '~40 steps · 15 min' } },
+  { value: 48, label: { zh: '标准调研', en: 'Standard' }, hint: { zh: '约 48 步 · 20 分钟', en: '~48 steps · 20 min' } },
   { value: 80, label: { zh: '深度调研', en: 'Deep dive' }, hint: { zh: '约 80 步 · 30 分钟', en: '~80 steps · 30 min' } },
 ];
 
@@ -28,8 +28,8 @@ export function ResearchDialog() {
   const researchPreset = useStudio((s) => s.researchPreset);
   const setResearchPreset = useStudio((s) => s.setResearchPreset);
   const [focus, setFocus] = useState('');
-  const [steps, setSteps] = useState(40);
-  const [minutes, setMinutes] = useState(15);
+  const [steps, setSteps] = useState(48);
+  const [minutes, setMinutes] = useState(20);
   const [busy, setBusy] = useState(false);
   const [presetApplied, setPresetApplied] = useState(false);
   const t = useT();
@@ -119,7 +119,7 @@ export function ResearchDialog() {
                   key={o.value}
                   onClick={() => {
                     setSteps(o.value);
-                    setMinutes(o.value === 24 ? 5 : o.value === 40 ? 15 : 30);
+                    setMinutes(o.value === 24 ? 5 : o.value === 48 ? 20 : 30);
                   }}
                   className={cn(
                     'rounded-xl border px-2 py-2 text-center transition-all',

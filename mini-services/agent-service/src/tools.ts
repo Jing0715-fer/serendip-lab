@@ -432,7 +432,7 @@ export function toolsDoc(includeGraph: boolean): string {
       '- add_evidence | 参数 {kind: question/hypothesis/evidence/insight/source/gap, title(≤60字), content(≤400字), detail?(≤1200字，2-4句向用户解释该证据的含义与重要性), sourceUrl?(原文链接), sourceRef?(可识别格式如 PMID:123456 / DOI:10.x / UniProt:P04406), tags?, confidence?(0-1), level?(user=用户一手数据/rct=临床RCT/cohort=队列研究/animal=动物因果实验/invitro=体外细胞/computational=计算推断)} | 用途：把确认的事实/假说/洞见钉上证据墙（detail+sourceRef 会在卡片详情中展示并支持点击打开原文；level 为证据等级，按来源研究类型如实标注） | 返回：{ok, nodeId}',
       '- batch_cards | 参数 {cards: [add_evidence 的参数对象数组，≤6 张，不同文献分开钉卡], links?: [link_evidence 的参数对象数组，≤6 条]} | 用途：一次批量钉多张证据卡并可附带连线——每确认 2-4 条不同文献的关键事实就应使用（比逐张 add_evidence 节省大量步数，同一文献的补充仍用 update_evidence） | 返回：{ok, pinned, merged, linked, results}',
       '- link_evidence | 参数 {from: 节点id或标题, to: 节点id或标题, relation: supports/contradicts/relates/derives/answers, label?} | 用途：连接证据与假说/问题 | 返回：{ok} 或 {error, candidates}',
-      '- update_evidence | 参数 {title, patch:{confidence?, content?, status?, tags?}} | 用途：更新已有证据 | 返回：{ok}',
+      '- update_evidence | 参数 {title, patch:{confidence?, content?, status?, level?, tags?}}（level 仅对 evidence/source 卡有效：user/rct/cohort/animal/invitro/computational） | 用途：更新已有证据（含补标漏掉的 level 证据等级） | 返回：{ok}',
       '- note_gap | 参数 {question, why} | 用途：记录未解之谜/空白 | 返回：{ok, nodeId}',
       '- ask_user | 参数 {question, context?} | 用途：向用户要只有 ta 知道的信息（调查暂停等待） | 返回：{ok, question}',
       '- finish_task | 参数 {summary} | 用途：结束当前任务并总结 | 返回：{ok}'

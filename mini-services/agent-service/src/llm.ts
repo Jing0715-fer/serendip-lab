@@ -27,7 +27,7 @@ export async function getZai() {
   return zai
 }
 
-export type LlmOpts = { face?: AgentFace }
+export type LlmOpts = { face?: AgentFace; /** Task 27 时间感知退避：本次调用内所有退避等待的总上限（ms）。剩余预算紧张时由调用方注入（如剩余分钟的 1/4）——避免 429 长退避把墙钟预算烧光；未设置时保持原全量耐心 */ maxTotalWaitMs?: number }
 
 /** 面孔 → thinking 开关（设置驱动，缺省兜底） */
 function thinkingFor(face: AgentFace | undefined): boolean {
@@ -137,19 +137,27 @@ async function llmOnce(systemPrompt: string, userPrompt: string, opts?: LlmOpts)
   return completion.choices[0]?.message?.content ?? ''
 }
 
-/** 带重试的 LLM 调用：普通错误短退避；一旦命中 429 限流切换长指数退避（8s/25s/60s/120s），总耐心 ≈3.5 分钟；返回体为空视为失败 */
+/** 带重试的 LLM 调用：普通错误短退避；一旦命中 429 限流切换长指数退避（8s/25s/60s/120s），总耐心 ≈3.5 分钟；返回体为空视为失败。
+ *  Task 27：opts.maxTotalWaitMs 可将累计退避耐心钳制到剩余预算的一小部分——限流风暴落在预算尾段时不再无谓等待，快速把失败抛给上层（investigate 循环的时间感知重试接管） */
 export async function llm(systemPrompt: string, userPrompt: string, opts?: LlmOpts): Promise<string> {
   const MAX_TRIES = 5
   const NORMAL_DELAYS = [1000, 3000, 5000, 8000] // 首次尝试不等待
   const RATE_DELAYS = [8000, 25000, 60000, 120000] // 429 限流专用长退避
   let rateLimited = false
   let delayIdx = 0
+  let waitedMs = 0 // Task 27：累计退避等待（受 maxTotalWaitMs 钳制）
   let lastErr: unknown = null
   for (let attempt = 0; attempt < MAX_TRIES; attempt++) {
     if (attempt > 0) {
       const table = rateLimited ? RATE_DELAYS : NORMAL_DELAYS
-      const d = table[Math.min(delayIdx, table.length - 1)]
+      let d = table[Math.min(delayIdx, table.length - 1)]
       delayIdx++
+      if (opts?.maxTotalWaitMs != null) {
+        const allowance = opts.maxTotalWaitMs - waitedMs
+        if (allowance <= 2_000) break // 预算内的等待额度已尽——立即上抛，不再空转
+        d = Math.min(d, allowance)
+      }
+      waitedMs += d
       await sleep(d)
     }
     try {

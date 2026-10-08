@@ -95,16 +95,16 @@ ${p.toolsDoc}
 # 调研准则
 - 先检索后精读：搜索工具先拿列表，再对高相关条目用 pubmed_fetch / web_read 深挖。
 - 交叉验证：关键结论需两个独立来源。
-- 证据密度是任务质量的硬指标：每个检索型任务目标产出 2-4 张新证据卡（不同文献/不同侧面分开钉卡）；确认多条事实后用 batch_cards 一次批量落墙（cards≤6，可附 links 连线）。落墙零成本：图操作（add_evidence/batch_cards/link_evidence/update_evidence/note_gap）不消耗全局步数预算——随查随落，绝不要为省步数攒到最后或省略不落。
+- 证据密度是任务质量的硬指标：每个检索型任务目标产出 3-5 张新证据卡（不同文献/不同侧面分开钉卡；目标 ≥2.5 张/任务）；确认多条事实后用 batch_cards 一次批量落墙（cards≤6，可附 links 连线）。落墙零成本：图操作（add_evidence/batch_cards/link_evidence/update_evidence/note_gap）不消耗全局步数预算——随查随落，绝不要为省步数攒到最后或省略不落。
 - 每确认一条关键事实/数据，立即 add_evidence 落到证据墙：title 具体（含对象与数值），content 写清事实与出处；detail 用 2-4 句向用户解释这条证据的含义（它意味着什么、与哪个假说相关、为何重要）；sourceRef 用可识别格式（如 PMID:123456 / DOI:10.x/… / UniProt:P04406），sourceUrl 填原文链接（如 https://pubmed.ncbi.nlm.nih.gov/123456/）——用户点击卡片可打开原文。同一文献只钉一张卡（系统会按 PMID/DOI 自动合并同源卡并返回 merged 提示）：补充信息用 update_evidence 更新原卡，不要为同一文献换标题重钉。
 - 每条 evidence/source 类卡片必须标注 level 证据等级：user(用户一手数据)/rct(临床RCT)/cohort(队列·临床观察)/animal(动物因果实验)/invitro(体外·细胞)/computational(计算·相关推断)。依据来源的研究类型如实分级，宁可降级不可虚标。
 - kind 选择：单一原始研究的事实用 evidence；综述/meta-分析/数据库/指南等「线索源」（非单一原始研究但值得回访的入口）用 source——同样落墙、参与同源去重与连线。
 - 证据与假说的关系用 link_evidence 建立；relation 取值：supports/contradicts/relates/derives/answers。
-- 发现文献间矛盾或未解现象 → note_gap，并用 link_evidence 把冲突的两条证据连成 contradicts 关系（label 注明冲突点，如「J曲线 vs 零效应」）——矛盾是课题的种子，不能只留在 scratchpad 里。
+- 发现文献间矛盾或未解现象 → note_gap，并立刻用 link_evidence 把冲突的两条证据连成 contradicts 关系（label 注明冲突点，如「J曲线 vs 零效应」）。矛盾是课题的种子，不能只留在 scratchpad 里——检索中一旦发现方向相反的结论（如观察性阳性 vs RCT/MR 阴性、动物阳性 vs 临床阴性），当场落边，不要攒到任务结束、更不要留给综合阶段补救。
 - 需要只有用户知道的一手信息（ta 的实验数据、队列观察、资源约束）→ ask_user（研究会暂停等待）；研究假说与背景已在上下文提供，禁止就已知信息发问。
 - 落墙是任务的一部分：检索到的关键文献事实应随查随落（add_evidence，含 level 分级与 detail 解释），不要把落墙堆积到任务最后；负面发现（找不到预期证据、结果与假说相反）也要 note_gap 或 add_evidence 落墙——它们同样是证据。
-- 工具返回空或报错：换检索词重试，最多换 2 次，不要原地打转。
-- 本任务最多 8 步；信息足够即 finish_task，summary 写清：获得了什么证据、支持/动摇了什么假说、留下什么疑问。
+- 工具返回空或报错：换检索词重试，最多换 2 次，不要原地打转。观察末尾出现「…(truncated)」属正常上下文截断——已展示的内容完整可用，直接基于它推进（如需完整单篇可减小 pmids 数量重新 fetch），不要重复同一调用试图取全量。
+- 本任务最多约 10 步（预算紧张时会压缩，剩余预算见下方）；信息足够即 finish_task，summary 写清：获得了什么证据、支持/动摇了什么假说、留下什么疑问。
 - 不要连续调用相同工具+相同参数。
 
 # 剩余预算
@@ -130,7 +130,7 @@ export const SYNTHESIZER_PROMPT = `# 角色
  "graph_ops":[
    {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|source|gap","title":"≤40字","content":"≤300字","detail?":"2-4句向用户解释：这条证据/假说意味着什么、为何重要（点击卡片时展示）","sourceRef?":"如 PMID:27135164","sourceUrl?":"https://pubmed.ncbi.nlm.nih.gov/27135164/","confidence?":0.8,"level?":"user|rct|cohort|animal|invitro|computational"},
    {"op":"link_evidence","from":"节点标题","to":"节点标题","relation":"supports|contradicts|relates|derives|answers","label?":"短标签"},
-   {"op":"update_evidence","title":"...","patch":{"confidence?":0.85,"status?":"strong|weak|contradicted"}}
+   {"op":"update_evidence","title":"...","patch":{"confidence?":0.85,"status?":"strong|weak|contradicted","level?":"user|rct|cohort|animal|invitro|computational"}}
  ],
  "continue":true,
  "next_focus":"若继续，下一轮聚焦点"}
@@ -229,7 +229,7 @@ export const FEEDBACK_PROMPT = `# 角色
  "graph_ops":[
    {"op":"add_evidence","kind":"question|hypothesis|evidence|insight|gap","title":"≤40字","content":"≤300字","detail?":"2-4句解释这条证据意味着什么","sourceRef?":"如 User experiment / PMID:123456","sourceUrl?":"https://…","confidence?":0.8,"level?":"user|rct|cohort|animal|invitro|computational"},
    {"op":"link_evidence","from":"节点标题","to":"节点标题","relation":"supports|contradicts|relates|derives|answers","label?":"短标签"},
-   {"op":"update_evidence","title":"...","patch":{"confidence?":0.4,"status?":"strong|weak|contradicted"}}
+   {"op":"update_evidence","title":"...","patch":{"confidence?":0.4,"status?":"strong|weak|contradicted","level?":"user|rct|cohort|animal|invitro|computational"}}
  ],
  "next_steps":["下一步 1（最高优先级，具体可执行）","下一步 2","…"],
  "plan_patch":{}}

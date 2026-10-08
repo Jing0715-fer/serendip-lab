@@ -829,7 +829,7 @@ export function insertActivity(
   )
 }
 
-export function listActivity(sessionId: string, limit = 120): ActivityEvent[] {
+export function listActivity(sessionId: string, limit = 240): ActivityEvent[] {
   const rows = db
     .query('SELECT * FROM activity WHERE session_id=? ORDER BY id DESC LIMIT ?')
     .all(sessionId, limit) as ActivityRow[]

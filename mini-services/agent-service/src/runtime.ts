@@ -27,8 +27,10 @@ const GRAPH_TOOL_NAMES = ['add_evidence', 'batch_cards', 'link_evidence', 'updat
 
 /** 访谈就绪后自动开启自主调研的延迟：留一小窗口给用户继续补充/细化需求 */
 const AUTO_START_DELAY_MS = 6_000
-/** 自动开启自主调研的默认预算（标准调研档） */
-const AUTO_START_BUDGET = { maxSteps: 40, maxMinutes: 15 } as const
+/** 自动开启自主调研的默认预算（标准调研档）。Task 27：40步/15分 → 48步/20分——
+ *  第九领域实证：429 退避吃掉约 7 分钟墙钟后时间取代步数成为瓶颈（38/40 步、15 分钟封顶余 2 步未用）；
+ *  落墙免计费后步数只统计检索，适当放宽双预算给限流风暴留缓冲 */
+const AUTO_START_BUDGET = { maxSteps: 48, maxMinutes: 20 } as const
 
 // ---------- 延迟收官 sweeper（Task 23） ----------
 /** 每次失败后的自动重试退避：2/5/10/15/30 分钟，之后每 30 分钟一次 */
@@ -268,6 +270,19 @@ export class AgentRuntime {
     return true
   }
 
+  /** Task 27：剩余墙钟预算（ms）——时间感知限流退避的锚点 */
+  private remainingMs(): number {
+    const b = getBudget(this.sessionId)
+    const elapsed = b.startedAt ? now() - b.startedAt : b.elapsedMs
+    return Math.max(0, b.maxMinutes * 60_000 - elapsed)
+  }
+
+  /** Task 27：限流重试等待上限——不超过剩余时间的 1/4（时间取代步数成为瓶颈后，
+ *  盲退避曾吃掉约一半墙钟）；预留 3s 下限避免热循环，90s 上限维持原耐心天花板 */
+  private rateWaitCapMs(): number {
+    return clamp(this.remainingMs() / 4, 3_000, 90_000)
+  }
+
   private remainingText(): string {
     const b = getBudget(this.sessionId)
     const elapsed = b.startedAt ? now() - b.startedAt : b.elapsedMs
@@ -354,7 +369,7 @@ export class AgentRuntime {
   }
 
   // ---------- 主入口：POST /research ----------
-  async start(focus: string | undefined, maxSteps = 40, maxMinutes = 15) {
+  async start(focus: string | undefined, maxSteps = 48, maxMinutes = 20) {
     if (this.running) return
     this.running = true
     this.stopFlag = false
@@ -374,6 +389,10 @@ export class AgentRuntime {
       round: b.round + 1,
       elapsedMs: 0,
     })
+    // Task 27 P2：免计费口径一次性说明——步数仅统计检索/精读，落墙零成本（防用户看到步数增长慢而困惑）
+    insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+      '预算口径：步数仅统计检索/精读等外部操作，证据卡落墙与连线零成本不计数；遇 API 限流时会自动退避重试',
+      'Budget note: steps count external search/read actions only — pinning cards & linking are free; API rate-limits are auto-retried with budget-aware backoff') })
 
     let reason = 'completed'
     try {
@@ -614,13 +633,15 @@ export class AgentRuntime {
     }, AUTO_START_DELAY_MS)
   }
 
-  // ---------- 调查内循环（ReAct，每任务最多 8 步；预算紧张时压缩到 5 步） ----------
+  // ---------- 调查内循环（ReAct，每任务最多 10 步；预算紧张时压缩到 5 步） ----------
   private async investigate(task: PlanTask) {
     this.setPhase('investigating', 'running')
     const scratchpad: ScratchEntry[] = []
     let parseFails = 0
     let llmFails = 0
-    const stepCap = this.budgetTight() ? 5 : 8
+    // Task 27 P1-②：落墙免计费后步数只统计检索，任务内检索空间变大——8 → 10 步
+    //（全局 stepsUsed 仍封顶，任务级上限只防单任务失控独吞预算）
+    const stepCap = this.budgetTight() ? 5 : 10
     // 落墙守护（P1）：任务开始时的证据卡数基准——finish 时若零新增且有检索成果，给一次抢救机会
     // Task 25：source 卡同样计入落墙（线索源也是墙上的研究成果）；密度守护追踪本任务新钉卡数
     const wallPinCount = () => listNodes(this.sessionId).filter((n) => n.kind === 'evidence' || n.kind === 'source').length
@@ -653,13 +674,24 @@ export class AgentRuntime {
       const out = await this.callInvestigator(task, scratchpad)
       if (!out.ok) {
         if (out.kind === 'llm') {
-          // LLM 调用失败：429 限流 → 递增等待（20s/40s/60s/80s/90s）自愈，其他错误固定 5s；宽松熔断（5 次）
+          // LLM 调用失败：429 限流 → 递增等待（20s/40s/60s/80s/90s）自愈，其他错误固定 5s；宽松熔断（5 次）。
+          // Task 27 P1-① 时间感知：等待上限不超过剩余墙钟的 1/4（盲退避曾吃掉约一半预算）；
+          // 剩余时间 <15s 时不再等待直接上抛——循环顶部 budgetOK() 会自然收官，别把尾段烧在 sleep 上
           llmFails++
           const isRateLimit = /\b429\b|too many requests|rate.?limit/i.test(out.error)
-          const waitMs = isRateLimit ? Math.min(20_000 * llmFails, 90_000) : 5_000
+          const remMs = this.remainingMs()
+          if (isRateLimit && remMs < 15_000) {
+            insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+              `API 限流且剩余时间不足（${Math.round(remMs / 1000)}s），不再等待重试，交由预算收口`,
+              `API rate-limited with only ${Math.round(remMs / 1000)}s left — skipping retry waits, letting the budget close the run`), ok: false })
+            continue
+          }
+          const waitMs = isRateLimit
+            ? Math.min(20_000 * llmFails, this.rateWaitCapMs())
+            : Math.min(5_000, this.rateWaitCapMs())
           insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId,
-            isRateLimit ? `API 限流，${Math.round(waitMs / 1000)}s 后自动重试（第 ${llmFails}/5 次）` : `LLM 调用失败（${llmFails}/5），5s 后重试`,
-            isRateLimit ? `API rate-limited — auto retry in ${Math.round(waitMs / 1000)}s (attempt ${llmFails}/5)` : `LLM call failed (${llmFails}/5), retry in 5s`)}: ${out.error}`, ok: false })
+            isRateLimit ? `API 限流，${Math.round(waitMs / 1000)}s 后自动重试（第 ${llmFails}/5 次，不超过剩余时间的 1/4）` : `LLM 调用失败（${llmFails}/5），5s 后重试`,
+            isRateLimit ? `API rate-limited — auto retry in ${Math.round(waitMs / 1000)}s (attempt ${llmFails}/5, capped at 1/4 of remaining time)` : `LLM call failed (${llmFails}/5), retry in 5s`)}: ${out.error}`, ok: false })
           await sleep(waitMs)
           if (llmFails >= 5) {
             this.paused = true
@@ -755,7 +787,13 @@ export class AgentRuntime {
 
       // 通用工具执行（外部检索 + 图操作）
       const obs = await this.runTool(toolName, args, step)
-      scratchpad.push({ thought, action: { tool: toolName, args }, observation: truncObs(obs) })
+      // Task 27（E2E 实证）：多摘要类工具（fetch/read/搜索）1600 字截断曾让模型误判「数据不完整」
+      // 而重复同参重调浪费步数——此类工具放宽到 6000 字；其余保持 1600
+      const OBS_LIMITS: Record<string, number> = {
+        pubmed_fetch: 6_000, web_read: 6_000, europepmc_search: 6_000,
+        openalex_search: 6_000, pubmed_search: 3_000,
+      }
+      scratchpad.push({ thought, action: { tool: toolName, args }, observation: truncObs(obs, OBS_LIMITS[toolName] ?? 1_600) })
 
       // Task 26 落墙免计费：纯图操作（落卡/连线/更新/记空白）不消耗全局步数预算——
       // 上代实证（饱和脂肪-CVD）：模型「舍不得」用步数落卡（密度 1.2 卡/任务），检索换词重试反而吃光预算。
@@ -908,7 +946,15 @@ export class AgentRuntime {
     })
     insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '新增证据节点', 'New card pinned')} [${kind}] ${node.title}` })
     this.emitState()
-    return { ok: true, nodeId: node.id, title: node.title }
+    // Task 27（E2E 实证：9 张卡中 2 张缺 level 且为 meta-分析误用 evidence）：软警告引导自纠
+    const warnings: string[] = []
+    if ((kind === 'evidence' || kind === 'source') && level == null) {
+      warnings.push('本卡未标注 level 证据等级（user/rct/cohort/animal/invitro/computational，按来源研究类型如实分级）——请用 update_evidence {title, patch:{level}} 补上')
+    }
+    if (kind === 'evidence' && /meta[\s-]?分析|系统综述|荟萃|systematic review|meta[\s-]?analysis|network meta|指南|guideline|综述|review/i.test(`${title} ${content}`)) {
+      warnings.push('疑似综述/meta-分析/指南类线索源——后续同类卡片请改用 kind=source（单一原始研究才用 evidence）')
+    }
+    return warnings.length ? { ok: true, nodeId: node.id, title: node.title, warnings } : { ok: true, nodeId: node.id, title: node.title }
   }
 
   /**
@@ -1252,7 +1298,12 @@ export class AgentRuntime {
       langDirective: langDirective(getSessionLang(this.sessionId)),
     })
     const userPrompt = `# 研究历史（thought → action → observation）\n${serializeScratchpad(scratchpad)}\n\n请输出下一步的严格 JSON（{"thought":"...","action":{"tool":"...","args":{...}}}）。\n提醒：已确认的关键事实请尽快 add_evidence / batch_cards 落到证据墙（图操作不消耗全局步数预算，落墙零成本；预算耗尽后未落墙的检索成果将丢失）；剩余预算紧张时应优先落墙与 finish_task，而非继续检索。`
-    const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm(), { face: 'investigator' })
+    // Task 27 P1-①：内层 llm() 退避耐心同样受剩余预算钳制（≤剩余 1/4，下限 8s）——
+    // 尾段限流风暴不再把几分钟烧在无谓等待上，快速上抛给本循环的时间感知重试梯队
+    const res = await llmJson<any>(systemPrompt, userPrompt, () => this.countLlm(), {
+      face: 'investigator',
+      maxTotalWaitMs: clamp(this.remainingMs() / 4, 8_000, 240_000),
+    })
     if (!res.ok) {
       // P2 修复：直接读结构化 kind，不再靠中文错误文案正则耦合（llm.ts 改文案不影响熔断分类）
       return { ok: false, kind: res.kind === 'llm' ? 'llm' : 'parse', error: res.error }
@@ -1295,16 +1346,27 @@ export class AgentRuntime {
       langDirective(getSessionLang(this.sessionId)),
     ].join('\n\n')
 
-    const res0 = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), { face: 'synthesizer' })
+    const res0 = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), {
+      face: 'synthesizer',
+      // Task 27 P1-①：中途综合的内层退避耐心受剩余预算钳制（≤剩余 1/3）；最终综合不受限（收官关键调用，失败有延迟收官兜底）
+      ...(final ? {} : { maxTotalWaitMs: clamp(this.remainingMs() / 3, 8_000, 240_000) }),
+    })
     // 研究综述是关键调用：退避重试（429 限流常见），最多 3 轮
+    // Task 27 P1-①：中途综合的重试等待与剩余预算挂钩（≤剩余 1/3）；最终综合保持原 20s/40s 阶梯
     let res = res0
     if (!res.ok) {
       for (let i = 1; i <= 2; i++) {
+        const waitMs = final
+          ? 20_000 * i
+          : Math.min(20_000 * i, Math.max(10_000, Math.round(this.remainingMs() / 3)))
         insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
-          `综合失败（${res.error.slice(0, 80)}），${20 * i}s 后重试 ${i}/2`,
-          `Synthesis failed (${res.error.slice(0, 80)}) — retry ${i}/2 in ${20 * i}s`), ok: false })
-        await sleep(20_000 * i)
-        res = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), { face: 'synthesizer' })
+          `综合失败（${res.error.slice(0, 80)}），${Math.round(waitMs / 1000)}s 后重试 ${i}/2`,
+          `Synthesis failed (${res.error.slice(0, 80)}) — retry ${i}/2 in ${Math.round(waitMs / 1000)}s`), ok: false })
+        await sleep(waitMs)
+        res = await llmJson<any>(SYNTHESIZER_PROMPT, userPrompt, () => this.countLlm(), {
+          face: 'synthesizer',
+          ...(final ? {} : { maxTotalWaitMs: clamp(this.remainingMs() / 3, 8_000, 240_000) }),
+        })
         if (res.ok) break
       }
     }

@@ -67,7 +67,7 @@ function sessionFullPayload(id: string) {
     directions: getDirections(id),
     explorations: listExplorations(id),
     stats,
-    activity: listActivity(id, 120),
+    activity: listActivity(id, 240),
   }
 }
 
@@ -130,8 +130,9 @@ async function handleResearch(id: string, request: Request) {
   const body = await readBody(request)
   if (body.lang) setSessionLang(id, normLang(body.lang))
   const focus = body.focus ? String(body.focus).trim().slice(0, 500) : undefined
-  const maxSteps = clamp(Math.round(Number(body.maxSteps) || 40), 1, 200)
-  const maxMinutes = clamp(Math.round(Number(body.maxMinutes) || 15), 1, 240)
+  // Task 27：默认预算 40/15 → 48/20（与 AUTO_START_BUDGET / 前端标准档对齐——时间取代步数成为瓶颈）
+  const maxSteps = clamp(Math.round(Number(body.maxSteps) || 48), 1, 200)
+  const maxMinutes = clamp(Math.round(Number(body.maxMinutes) || 20), 1, 240)
 
   const existing = AgentRuntime.find(id)
   if (existing?.running && !existing.isPaused()) return errJson('agent_busy', 409)
