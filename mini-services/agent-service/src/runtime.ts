@@ -27,6 +27,13 @@ const EXTERNAL_TOOL_NAMES = [
 ]
 const GRAPH_TOOL_NAMES = ['add_evidence', 'batch_cards', 'link_evidence', 'update_evidence', 'note_gap', 'ask_user', 'finish_task']
 
+/**
+ * 检索/精读类动作计数——密度守护、轨迹小结、任务历史的统一口径（Task 31 抽取，
+ * 此前同一正则在 4 处内联，改口径时容易漂移不一致）。
+ */
+const countSearchActions = (scratchpad: ScratchEntry[]): number =>
+  scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb|clinvar/i.test(String(s.action?.tool || ''))).length
+
 /** 访谈就绪后自动开启自主调研的延迟：留一小窗口给用户继续补充/细化需求 */
 const AUTO_START_DELAY_MS = 6_000
 /** 自动开启自主调研的默认预算（标准调研档）。Task 27：40步/15分 → 48步/20分——
@@ -574,6 +581,24 @@ export class AgentRuntime {
         insertActivity(this.sessionId, { type: 'notice', summary: noticeFor(getSessionLang(this.sessionId), 'budgetTight') })
       }
 
+      // T31 P1-②：末段任务饥饿防护——剩余步数 <4（检索+落卡+收尾的最小闭环都凑不齐）时不启动新任务。
+      // T30 E2E 实证：R2 t4 在预算近耗尽时照常启动，1 次检索 0 卡收口——白耗预算还产出误导性的「已完成」记录。
+      // 未启动任务点名进活动日志供用户决策续研；剩余墙钟全部让给最终综合
+      const bLeft = getBudget(this.sessionId)
+      if (bLeft.maxSteps - bLeft.stepsUsed < 4) {
+        const starved = plan.tasks.filter((t) => !t.done)
+        if (starved.length) {
+          insertActivity(this.sessionId, {
+            type: 'notice',
+            summary: noticeFor(getSessionLang(this.sessionId), 'starvedTasks', {
+              n: starved.length,
+              tasks: starved.map((t) => oneLine(t.goal, 60)).slice(0, 3).join('；'),
+            }),
+          })
+        }
+        return 'budget'
+      }
+
       const stepsBefore = getBudget(this.sessionId).stepsUsed
       await this.investigate(task)
       tasksSinceSynth++
@@ -691,36 +716,54 @@ export class AgentRuntime {
     // 两处收口点（finish_task 分支 + 步数上限窗口）共用的矛盾自检提示文案
     const CONTRADICT_HINT =
       'SYSTEM: 自检发现本任务的研究历史中同时出现「获益/保护方向」与「损害/无效方向」的证据表述，但证据墙在本任务中没有新增任何 contradicts 边。若这确属同一问题上的相反结论（例如：观察性研究显示降低风险 vs 孟德尔随机化显示无因果关联），请先用 link_evidence（relation=contradicts，from/to 为两张证据卡的 id，label 一句话点明冲突点）把这对冲突结构化，再 finish_task；若只是不同问题/不同暴露的措辞重叠（并非真正的结论对立），直接 finish_task 即可。'
+    // Task 31 P1-①：密度守护提示文案（finish_task 分支 + 步数上限收口窗口两处共用——
+    // T30 E2E 实证 9/9 任务经 fallback 路径收口，只接 finish_task 分支的密度督促从未被走到）
+    const densityHint = (newPins: number, searches: number) =>
+      `SYSTEM: 本任务至今只钉了 ${newPins} 张证据卡，但研究历史中有 ${searches} 次检索/精读——图操作（add_evidence/batch_cards/link_evidence）不消耗全局步数预算，落墙零成本。若其中还有 ≥1 条值得保留的关键事实（不同文献分卡，含 PMID/DOI、level 证据等级与 detail 解释），请用 batch_cards 一次补落（2-4 张，可附 links 连线）后再 finish_task；若确属摸底型任务且无更多可落，直接 finish_task 并在 summary 中写明检索结论。`
     // Task 22：主步数用尽后追加 ≤4 轮收口窗口（落墙 + 矛盾自检）；Task 28：+3 → +4 给两项注入各留位
     for (let step = 0; step < stepCap + 4; step++) {
       if (!this.budgetOK() || this.stopFlag) break
       await this.waitIfPaused()
       if (this.stopFlag) break
 
-      // 步数上限收口自检（Task 22 落墙守护 + Task 28 矛盾自检）：主窗口结束时有未了事项 → 注入系统指令（每项仅一次）。
+      // 步数上限收口自检（Task 22 落墙守护 + Task 28 矛盾自检 + Task 31 密度守护）：主窗口结束时有未了事项 → 注入系统指令（每项仅一次）。
       // Task 28 P1-② 修复：第十一领域 E2E 实证 5/5 任务全部经本路径收口（模型用满 10 步检索、
       // 补落窗口落卡后 break→fallback done），finish_task 分支的钩子从未被走到——
-      // 矛盾自检必须同时挂在本收口路径上，否则形同虚设；窗口 +4 轮给落墙+矛盾两项注入留位
+      // 矛盾自检必须同时挂在本收口路径上，否则形同虚设；窗口 +4 轮给各项注入留位
+      // Task 31 P1-①：密度守护同样挂上（T30 E2E 实证 9/9 走本路径，R2 尾段 3 任务以 0-1 卡收口把密度拉低到 1.67）。
+      // 优先级：零卡抢救 > 密度督促 > 矛盾结构化；零卡但预算余量不足抢救时密度督促兜底（落墙本就免计费）
       if (step >= stepCap) {
         const needPin = this.needsEvidenceRescue(evBefore, scratchpad)
+        const pinsNow = wallPinCount() - evBefore
+        const searchesNow = countSearchActions(scratchpad)
+        const needDensity = !densityNudged && pinsNow <= 2 && searchesNow >= 3
         const needContradict = !contradictsNudged
           && listEdges(this.sessionId).filter((e) => e.relation === 'contradicts').length === contradictBefore
           && wallPinCount() >= 2
           && this.oppositeEvidencePairs(scratchpad)
-        if (!needPin && !needContradict) break
-        if (needPin) {
-          if (!rescueUsed) {
-            rescueUsed = true
-            insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
-              '落墙守护：步数达到上限但检索成果尚未上墙，追加补落窗口（≤4 步）',
-              'Evidence-pin guard: step cap reached with unpinned results — extending a pinning window (≤4 steps)') })
-            scratchpad.push({
-              thought: '步数达到上限，任务收尾自检：证据墙未新增卡片',
-              action: { tool: '__step_cap__', args: {} },
-              observation:
-                'SYSTEM: 步数已达上限。本任务检索到的关键事实尚未落到证据墙——请立即用 add_evidence 把已确认的关键事实落墙（1-3 张，含 PMID/DOI 来源、level 证据等级、detail 两句解释），随后 finish_task 收尾。不要发起新的检索。',
-            })
-          }
+        if (!needPin && !needDensity && !needContradict) break
+        if (needPin && !rescueUsed) {
+          rescueUsed = true
+          insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+            '落墙守护：步数达到上限但检索成果尚未上墙，追加补落窗口（≤4 步）',
+            'Evidence-pin guard: step cap reached with unpinned results — extending a pinning window (≤4 steps)') })
+          scratchpad.push({
+            thought: '步数达到上限，任务收尾自检：证据墙未新增卡片',
+            action: { tool: '__step_cap__', args: {} },
+            observation:
+              'SYSTEM: 步数已达上限。本任务检索到的关键事实尚未落到证据墙——请立即用 add_evidence 把已确认的关键事实落墙（1-3 张，含 PMID/DOI 来源、level 证据等级、detail 两句解释），随后 finish_task 收尾。不要发起新的检索。',
+          })
+        } else if (needDensity) {
+          // 落了 0-2 张但检索 ≥3 次（零卡且抢救未接管/被无视时由此兜底）→ 一次性密度督促补落
+          densityNudged = true
+          insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+            `密度守护（收口窗口）：${searchesNow} 次检索仅钉 ${pinsNow} 张卡，已要求补落后再收口`,
+            `Density guard (closure window): only ${pinsNow} card(s) pinned after ${searchesNow} searches — asked to pin more before closing`) })
+          scratchpad.push({
+            thought: '步数达到上限，任务收尾密度自检：证据卡不足',
+            action: { tool: '__step_cap__', args: {} },
+            observation: densityHint(pinsNow, searchesNow),
+          })
         } else if (needContradict) {
           // 落墙已完成、仅剩冲突未结构化 → 注入矛盾提示续窗 1 轮
           contradictsNudged = true
@@ -812,9 +855,10 @@ export class AgentRuntime {
         }
         // Task 25 密度守护（Task 26 重校准：落墙免费后阈值从 ≤1/≥2 提至 ≤2/≥3）：
         // 检索型任务检索 ≥3 次却仅钉 ≤2 张卡 → 一次性督促补落；摸底型任务可在 summary 说明后直接二次 finish 通过
+        // Task 31 P1-①：文案与收口窗口共用 densityHint（两处口径必须一致，防止模型在两个收口路径看到矛盾指令）
         if (!densityNudged) {
           const newPins = wallPinCount() - evBefore
-          const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
+          const searches = countSearchActions(scratchpad)
           const bNow = getBudget(this.sessionId)
           if (newPins <= 2 && searches >= 3 && bNow.maxSteps - bNow.stepsUsed >= 2) {
             densityNudged = true
@@ -824,8 +868,7 @@ export class AgentRuntime {
             scratchpad.push({
               thought: '任务收尾密度自检：证据卡不足',
               action: { tool: 'finish_task', args: {} },
-              observation:
-                `SYSTEM: 本任务至今只钉了 ${newPins} 张证据卡，但研究历史中有 ${searches} 次检索/精读——图操作（add_evidence/batch_cards/link_evidence）不消耗全局步数预算，落墙零成本。若其中还有 ≥1 条值得保留的关键事实（不同文献分卡，含 PMID/DOI、level 证据等级与 detail 解释），请用 batch_cards 一次补落（2-4 张，可附 links 连线）后再 finish_task；若确属摸底型任务且无更多可落，直接 finish_task 并在 summary 中写明检索结论。`,
+              observation: densityHint(newPins, searches),
             })
             continue
           }
@@ -913,7 +956,7 @@ export class AgentRuntime {
     const newNodes = listNodes(this.sessionId).filter((n) => !nodesBefore.has(n.id))
     const pinned = newNodes.filter((n) => n.kind === 'evidence' || n.kind === 'source')
     const others = newNodes.filter((n) => n.kind === 'hypothesis' || n.kind === 'gap' || n.kind === 'insight')
-    const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
+    const searches = countSearchActions(scratchpad)
     // 末段有效思路：排除系统注入的自检条目（__step_cap__/纠错反馈）与空 thought；
     // Task 30 P2-③：优先取最后一个「非策略性」thought——末段若是「我需要调整检索策略」这类
     // 过程性文本，对综合阶段毫无信息量（T29 E2E 实证样例）；全为策略性时退回原选取
@@ -972,7 +1015,7 @@ export class AgentRuntime {
     try {
       const nodes = listNodes(this.sessionId)
       const pinned = nodes.filter((n) => !nodesBeforeIds.has(n.id) && (n.kind === 'evidence' || n.kind === 'source')).length
-      const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
+      const searches = countSearchActions(scratchpad)
       const round = getPlan(this.sessionId)?.round ?? getBudget(this.sessionId).round ?? 1
       insertTaskRecord(this.sessionId, {
         taskId: task.id,

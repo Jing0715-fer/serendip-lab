@@ -77,6 +77,10 @@ export function noticeFor(lang: Lang, key: NoticeKey, params: Record<string, str
       '研究预算已用尽，{n} 个任务未能执行：{tasks}……这些方向将在最终综述的「下一步建议」中点名',
       'Budget exhausted with {n} task(s) left unrun: {tasks}… These will be flagged in the final review’s “Next Steps”',
     ],
+    starvedTasks: [
+      '📑 剩余步数不足以启动新任务（检索+落卡+收尾的最小闭环需 ≥4 步），{n} 个任务未启动：{tasks}……剩余预算将全部用于最终综述，这些方向可在续研时接续',
+      '📑 Too few steps left to start a new task (a search+pin+close loop needs ≥4 steps) — {n} task(s) not started: {tasks}… The remaining budget goes to the final review; these directions can resume in a follow-up round',
+    ],
     userNotePrefix: ['【用户手动添加素材】', '[User-added card]'],
     demoLoaded: [
       '示例课题已载入 · 点击「继续研究」可让 Agent 基于此课题继续自主研究，或新建属于你的课题',
@@ -164,6 +168,7 @@ export type NoticeKey =
   | 'finalSynthesisNote'
   | 'budgetTight'
   | 'budgetLeftover'
+  | 'starvedTasks'
   | 'userNotePrefix'
   | 'demoLoaded'
   | 'investigatingStart'
