@@ -312,6 +312,9 @@ const DICT = {
     'Every reasoning step, database query and evidence pin lands here as a complete timeline.',
   ],
   'act.phaseSwitch': ['阶段切换 → {phase}', 'Phase → {phase}'],
+  'act.loadEarlier': ['加载更早的 {n} 条活动', 'Load {n} earlier events'],
+  'act.noMore': ['已到最早记录', 'You reached the beginning'],
+  'act.loadingEarlier': ['正在加载更早的活动…', 'Loading earlier events…'],
 
   /* 证据墙标签页 */
   'canvas.loading': ['正在展开软木板…', 'Unrolling the corkboard…'],

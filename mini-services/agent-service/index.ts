@@ -2,7 +2,7 @@
 import {
   createSession, getSessionRow, mapSessionFull, listSessionSummaries, deleteSession,
   updateSessionFields, listMessages, listNodes, listEdges, listQuestions, getPlan,
-  listActivity, insertActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
+  listActivity, listActivityPage, insertActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
   computeStats, touchSession, getDirections, listExplorations, NODE_KINDS,
 } from './src/db'
 import { broadcast, makeSseResponse } from './src/emitter'
@@ -68,6 +68,8 @@ function sessionFullPayload(id: string) {
     explorations: listExplorations(id),
     stats,
     activity: listActivity(id, 240),
+    // Task 29 P1-③：初始加载只携带尾部 240 条，hasMore 供前端「加载更早」按钮判定
+    activityMore: listActivityPage(id, null, 1).total > 240,
   }
 }
 
@@ -303,6 +305,18 @@ const server = Bun.serve({
       const row = getSessionRow(id)
       if (!row) return errJson('session not found', 404)
       return makeSseResponse(request, id, row.phase, row.status)
+    }
+
+    // --- /api/agent/sessions/:id/activity（Task 29 P1-③：活动日志分页，向更早翻页） ---
+    const actMatch = path.match(/^\/api\/agent\/sessions\/([^/]+)\/activity$/)
+    if (actMatch && method === 'GET') {
+      const id = actMatch[1]
+      if (!getSessionRow(id)) return errJson('session not found', 404)
+      const beforeRaw = Number(url.searchParams.get('before'))
+      const before = Number.isFinite(beforeRaw) && beforeRaw > 0 ? beforeRaw : null
+      const limitRaw = Number(url.searchParams.get('limit'))
+      const limit = Number.isFinite(limitRaw) ? clamp(Math.round(limitRaw), 1, 500) : 100
+      return json(listActivityPage(id, before, limit))
     }
 
     // --- /api/agent/sessions/:id 子操作 ---

@@ -1,10 +1,10 @@
 'use client';
 
-// activity-tab.tsx — 活动日志：Agent 每一步思考与工具调用的全程记录（Task 13 双语）
-import { Activity, BrainCircuit, CheckCircle2, ChevronRight, Wrench, XCircle } from 'lucide-react';
+// activity-tab.tsx — 活动日志：Agent 每一步思考与工具调用的全程记录（Task 13 双语；Task 29 分页加载更早历史）
+import { Activity, BrainCircuit, CheckCircle2, ChevronUp, ChevronRight, Loader2, Wrench, XCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useStudio, fmtTime, fmtElapsed } from '@/store/studio';
-import { TOOL_LABEL, useI18n, useT } from '@/lib/i18n';
+import { TOOL_LABEL, fmt, useI18n, useT } from '@/lib/i18n';
 import type { ActivityEvent } from '@/lib/types';
 
 function EventRow({ ev }: { ev: ActivityEvent }) {
@@ -33,7 +33,6 @@ function EventRow({ ev }: { ev: ActivityEvent }) {
   }
 
   const toolLabel = ev.tool ? (TOOL_LABEL[ev.tool]?.[lang] ?? ev.tool) : null;
-
   return (
     <div className="flex gap-2.5 py-1.5">
       <div className="flex w-12 shrink-0 flex-col items-end">
@@ -67,8 +66,12 @@ function EventRow({ ev }: { ev: ActivityEvent }) {
 
 export function ActivityTab() {
   const activity = useStudio((s) => s.activity);
+  const activityHasMore = useStudio((s) => s.activityHasMore);
+  const activityLoading = useStudio((s) => s.activityLoading);
+  const loadEarlierActivity = useStudio((s) => s.loadEarlierActivity);
   const stats = useStudio((s) => s.stats);
   const t = useT();
+  const lang = useI18n((s) => s.lang);
 
   const list = [...activity].reverse(); // 最新在上
 
@@ -103,6 +106,29 @@ export function ActivityTab() {
           </div>
         ) : (
           <div className="divide-y divide-stone-200/70 rounded-2xl border border-stone-300/70 bg-white/50 px-3 py-2 dark:divide-stone-700/60 dark:border-stone-700 dark:bg-stone-800/40">
+            {/* Task 29 P1-③：长会话初始只携带尾部 240 条——顶部按钮向更早翻页（游标分页，每页 100 条） */}
+            {activityHasMore && (
+              <div className="py-2">
+                <button
+                  type="button"
+                  onClick={() => void loadEarlierActivity()}
+                  disabled={activityLoading}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-stone-300 py-2 text-[12px] font-medium text-stone-500 transition-colors hover:border-stone-400 hover:text-stone-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-stone-600 dark:text-stone-400 dark:hover:border-stone-500 dark:hover:text-stone-200"
+                >
+                  {activityLoading ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin" />
+                      {t('act.loadingEarlier')}
+                    </>
+                  ) : (
+                    <>
+                      <ChevronUp size={13} />
+                      {fmt(t('act.loadEarlier'), { n: 100 })}
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
             {list.map((ev) => (
               <EventRow key={ev.id} ev={ev} />
             ))}

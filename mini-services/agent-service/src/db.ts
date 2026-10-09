@@ -801,6 +801,19 @@ export function listEdges(sessionId: string): BoardEdge[] {
   return rows.map(mapEdge)
 }
 
+// Task 29 P1-②：精确查边（contradicts 反向去重用——对称语义边 A→B 与 B→A 视为同一条）
+export function findEdge(sessionId: string, source: string, target: string, relation: EdgeRelation): BoardEdge | null {
+  const r = db
+    .query('SELECT * FROM edges WHERE session_id=? AND source=? AND target=? AND relation=?')
+    .get(sessionId, source, target, relation) as EdgeRow | undefined
+  return r ? mapEdge(r) : null
+}
+
+// Task 29 P1-②：反向边补 label（首次未写 label、反向重连时带来冲突点描述）
+export function updateEdgeLabel(sessionId: string, edgeId: string, label: string): void {
+  db.run('UPDATE edges SET label=? WHERE session_id=? AND id=?', [label.slice(0, 200), sessionId, edgeId])
+}
+
 // ---------- questions ----------
 export function replaceQuestions(sessionId: string, qs: Omit<ResearchQuestion, 'id'>[]) {
   db.run('DELETE FROM questions WHERE session_id=?', [sessionId])
@@ -834,6 +847,30 @@ export function listActivity(sessionId: string, limit = 240): ActivityEvent[] {
     .query('SELECT * FROM activity WHERE session_id=? ORDER BY id DESC LIMIT ?')
     .all(sessionId, limit) as ActivityRow[]
   return rows.reverse().map(mapActivity)
+}
+
+// Task 29 P1-③：活动日志分页（向更早翻页）——长会话（20 分钟调研全量事件 >240）
+// 重载后只能看到尾部 240 条，头部历史丢失。游标式分页：before=当前最早 db id。
+export function listActivityPage(
+  sessionId: string,
+  before: number | null,
+  limit = 100
+): { events: ActivityEvent[]; hasMore: boolean; total: number } {
+  const total = (db.query('SELECT COUNT(*) AS c FROM activity WHERE session_id=?').get(sessionId) as { c: number }).c
+  const rows = before
+    ? (db
+        .query('SELECT * FROM activity WHERE session_id=? AND id<? ORDER BY id DESC LIMIT ?')
+        .all(sessionId, before, limit) as ActivityRow[])
+    : (db
+        .query('SELECT * FROM activity WHERE session_id=? ORDER BY id DESC LIMIT ?')
+        .all(sessionId, limit) as ActivityRow[])
+  const events = rows.reverse().map(mapActivity)
+  // 还有更早的行：本页最早 id（ASC 后 events[0]）之前仍存在记录
+  const oldest = events.length ? events[0].id : before ?? 0
+  const hasMore = oldest > 0
+    ? !!(db.query('SELECT id FROM activity WHERE session_id=? AND id<? LIMIT 1').get(sessionId, oldest) as { id: number } | undefined)
+    : false
+  return { events, hasMore, total }
 }
 
 // ---------- explorations（课题探索闭环，Task 16） ----------

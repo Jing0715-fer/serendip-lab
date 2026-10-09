@@ -5,6 +5,7 @@ import {
   listNodes, listEdges, listMessages, listQuestions,
   insertMessage, insertActivity, updateSessionFields, getSessionRow,
   findNodeByTitle, findNodeBySourceKey, sourceDedupKey, insertNode, updateNode, updateNodeContent, insertEdge,
+  findEdge, updateEdgeLabel,
   replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS, EVIDENCE_LEVELS,
   normalizeNodeStatus,
   getPendingFinal, savePendingFinal, listPendingFinalSessions,
@@ -87,6 +88,9 @@ export function normalizeLevel(v: unknown): EvidenceLevel | null {
 const PRECLINICAL_RE = /临床前|preclinical|小鼠|\bmouse\b|\bmice\b|murine|C57BL|BALB|裸鼠|鼠模型|异种移植|xenograft|\bPDX\b/i
 const INVITRO_RE = /细胞系|cell lines?\b|in vitro|体外培养|培养细胞|2D 培养|3D 培养|类器官|organoids?\b/i
 const HUMAN_RE = /患者|patient|受试者|参与者|志愿者|队列|cohort|前瞻性|回顾性|prospective|retrospective|临床试验|clinical trial|\btrial\b|随机|randomi[sz]ed|安慰剂|placebo|人群|人体|人类|流行病学|epidemiolog|孟德尔|Mendelian|全基因组关联|\bGWAS\b/i
+// Task 29 P2-④：孟德尔随机化/遗传工具变量研究——六等级体系不动（避免 schema/front 端大改），
+// 以 MR 专有 tag 标识：cohort 等级 + 'MR' 标签，卡面即可区分遗传学因果推断与常规观察队列
+const MR_RE = /孟德尔|Mendelian|遗传工具变量|genetic instrument|遗传学因果|多基因风险评分.*因果|polygenic.*causal/i
 
 export function sanityCheckLevel(level: EvidenceLevel | null, title: string, content: string): EvidenceLevel | null {
   if (!level || level === 'user' || level === 'computational') return level
@@ -679,6 +683,8 @@ export class AgentRuntime {
     // Task 28 P1-②：本任务 contradicts 落边基准——收口时零新增且检测到反向证据对 → 一次性结构化提示
     const contradictBefore = listEdges(this.sessionId).filter((e) => e.relation === 'contradicts').length
     let contradictsNudged = false
+    // Task 29 P1-①：任务开始时的节点 id 快照——fallback 收口时差集即本任务新钉卡（轨迹小结的原材料）
+    const nodesBeforeIds = new Set(listNodes(this.sessionId).map((n) => n.id))
     // 两处收口点（finish_task 分支 + 步数上限窗口）共用的矛盾自检提示文案
     const CONTRADICT_HINT =
       'SYSTEM: 自检发现本任务的研究历史中同时出现「获益/保护方向」与「损害/无效方向」的证据表述，但证据墙在本任务中没有新增任何 contradicts 边。若这确属同一问题上的相反结论（例如：观察性研究显示降低风险 vs 孟德尔随机化显示无因果关联），请先用 link_evidence（relation=contradicts，from/to 为两张证据卡的 id，label 一句话点明冲突点）把这对冲突结构化，再 finish_task；若只是不同问题/不同暴露的措辞重叠（并非真正的结论对立），直接 finish_task 即可。'
@@ -878,11 +884,49 @@ export class AgentRuntime {
       }
       this.persistStep()
     }
-    // 达到步数上限也算完成（summary 可为空）
+    // 达到步数上限也算完成。Task 29 P1-①：fallback 收口不再留空 summary——
+    // 第十一领域 E2E 实证 5/5 任务经本路径收口（finish_task 从未被走到），全部任务小结为空，
+    // 最终综合的【已完成任务小结】块沦为「（无小结）」×N，直接精简化综述质量。
+    // 此处从钉卡差集 + 检索轨迹确定性合成小结（零 LLM 成本——预算此刻本就耗尽）。
     if (!task.done) {
       task.done = true
+      task.summary = this.composeFallbackSummary(scratchpad, nodesBeforeIds)
       this.persistTask(task)
     }
+  }
+
+  /**
+   * Task 29 P1-①：步数封顶/预算耗尽收口时的轨迹小结（无 LLM 调用的确定性合成）。
+   * 原材料：①本任务新钉的证据卡标题（nodesBefore 差集，最重要——综合阶段可直接引用）；
+   * ②检索/精读次数；③末段有效思路（模型自己的判断，比空值好得多）。
+   * 综合 prompt 里 doneTasks 的「（无小结）」从主要路径上彻底消失。
+   */
+  private composeFallbackSummary(scratchpad: ScratchEntry[], nodesBefore: Set<string>): string {
+    const lang = getSessionLang(this.sessionId)
+    const newNodes = listNodes(this.sessionId).filter((n) => !nodesBefore.has(n.id))
+    const pinned = newNodes.filter((n) => n.kind === 'evidence' || n.kind === 'source')
+    const others = newNodes.filter((n) => n.kind === 'hypothesis' || n.kind === 'gap' || n.kind === 'insight')
+    const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
+    // 末段有效思路：排除系统注入的自检条目（__step_cap__/纠错反馈）与空 thought
+    const lastThought = [...scratchpad]
+      .reverse()
+      .find((s) => (s.thought || '').trim() && s.action?.tool !== '__step_cap__' && s.action?.tool !== '__invalid_output__' && !/收尾自检|纠正/.test(s.thought))
+    const parts: string[] = []
+    if (pinned.length) {
+      const titles = pinned.map((n) => oneLine(n.title, 30)).slice(0, 4).join('；')
+      parts.push(lang === 'en' ? `pinned ${pinned.length} card(s): ${titles}${pinned.length > 4 ? ' …' : ''}` : `钉卡 ${pinned.length} 张：${titles}${pinned.length > 4 ? ' 等' : ''}`)
+    }
+    if (others.length) parts.push(lang === 'en' ? `${others.length} hypothesis/gap card(s)` : `另钉 ${others.length} 张假说/空白卡`)
+    if (searches) parts.push(lang === 'en' ? `${searches} search/read actions` : `${searches} 次检索/精读`)
+    if (lastThought) parts.push(lang === 'en' ? `last assessment: ${oneLine(lastThought.thought, 160)}` : `末段判断：${oneLine(lastThought.thought, 160)}`)
+    const head = lang === 'en' ? '(closed at step cap) ' : '（步数上限收口）'
+    const body = parts.length ? parts.join(lang === 'en' ? '; ' : '；') : (lang === 'en' ? 'no pinned results this task' : '无落墙成果')
+    if (pinned.length || lastThought) {
+      insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+        `任务收口（步数上限）：已自动生成轨迹小结（${pinned.length} 张新卡）供最终综合引用`,
+        `Task closed at step cap: trace summary auto-generated (${pinned.length} new cards) for the final synthesis`) })
+    }
+    return `${head}${body}`.slice(0, 400)
   }
 
   /** 落墙守护判定：全程零新增 evidence 卡 + scratchpad 里有真实检索成果 + 预算还够补落（≥3 步） */
@@ -959,6 +1003,15 @@ export class AgentRuntime {
     if (!content) return { error: '缺少 content' }
     const tags = Array.isArray(args.tags) ? args.tags.map(String).slice(0, 6) : []
     const confidence = args.confidence != null ? clamp(Number(args.confidence), 0, 1) : null
+    // Task 29 P2-④：孟德尔随机化/遗传工具变量研究自动补 MR 标签（等级体系六档不动，cohort+MR 区分
+    // 遗传学因果推断与常规观察队列——卡面 tags 即可见；配合 prompts 引导双保险）
+    if (
+      (String(args.kind || 'evidence') === 'evidence' || String(args.kind || 'evidence') === 'source') &&
+      !tags.some((x: string) => /^mr$/i.test(x)) &&
+      MR_RE.test(`${String(args.title || '')} ${String(args.content || '')}`)
+    ) {
+      tags.push('MR')
+    }
     // Task 20 打磨：证据等级只对 evidence/source 卡有意义（研究类型分级），
     // 假说/洞见/课题等语句型卡片不带 level，防止语义泄漏（真实测试发现 hypothesis 被标 animal）
     // Task 22：归一化后过合理性校验器（保守降级：纯动物/体外文本不得标临床级）
@@ -1096,6 +1149,21 @@ export class AgentRuntime {
     if (relation === 'answers' && srcNode.kind === 'question' && dstNode.kind !== 'question') {
       finalSrc = dstNode
       finalDst = srcNode
+    }
+
+    // Task 29 P1-②：contradicts 语义对称——B→A 与已有 A→B 是同一条关系，反向重连不新建平行边
+    //（insertEdge 只挡同向重复；有机矛盾落边量上来后 A→B + B→A 双平行线必然出现）
+    if (relation === 'contradicts') {
+      const reverse = findEdge(this.sessionId, finalDst.id, finalSrc.id, 'contradicts')
+      if (reverse) {
+        const newLabel = args.label ? String(args.label) : null
+        if (newLabel && !reverse.label) updateEdgeLabel(this.sessionId, reverse.id, newLabel)
+        insertActivity(this.sessionId, { type: 'notice', summary: L(this.sessionId,
+          `矛盾边去重：${finalDst.title.slice(0, 24)} ⇄ ${finalSrc.title.slice(0, 24)} 的反向 contradicts 已存在，合并为一条${newLabel && !reverse.label ? '（已补冲突点 label）' : ''}`,
+          `Contradiction dedup: reverse contradicts between “${finalDst.title.slice(0, 24)}” and “${finalSrc.title.slice(0, 24)}” already exists — merged into one`) })
+        this.emitState()
+        return { ok: true, deduped: true, reversed: true, edgeId: reverse.id, note: '该矛盾对已有反向边，已合并；无需重连' }
+      }
     }
 
     const edge = insertEdge(this.sessionId, finalSrc.id, finalDst.id, relation, args.label ? String(args.label) : null)

@@ -45,7 +45,7 @@ export type ToolRunning = {
   ts: number;
 };
 
-const ACTIVITY_CAP = 300;
+const ACTIVITY_CAP = 1000; // Task 29：300 → 1000——分页加载历史后不被滚动窗口立即剪掉（20 分钟调研全量事件 ~400 条）
 const LIVE_TTL_MS = 5000;
 
 type StudioState = {
@@ -61,6 +61,11 @@ type StudioState = {
   directions: ResearchDirections | null;
   stats: Stats | null;
   activity: ActivityEvent[];
+  // ---- 活动日志分页（Task 29 P1-③） ----
+  /** 会话 DB 中还有早于初始 240 条载荷的历史事件 */
+  activityHasMore: boolean;
+  /** 「加载更早」请求进行中 */
+  activityLoading: boolean;
 
   // ---- 课题探索闭环（Task 16） ----
   explorations: Record<string, Exploration>;
@@ -97,6 +102,8 @@ type StudioState = {
   init: () => Promise<void>;
   refreshSessions: () => Promise<void>;
   loadSession: (id: string) => Promise<void>;
+  /** Task 29 P1-③：向更早翻页加载活动日志（游标 = 当前最早 db id） */
+  loadEarlierActivity: () => Promise<void>;
   createSession: (opts?: { demo?: boolean }) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
   sendChat: (text: string) => Promise<void>;
@@ -181,6 +188,8 @@ export const useStudio = create<StudioState>((set, get) => ({
   directions: null,
   stats: null,
   activity: [],
+  activityHasMore: false,
+  activityLoading: false,
   explorations: {},
   exploreBusy: {},
   exploreNodeId: null,
@@ -243,6 +252,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         directions: st.directions ?? null,
         stats: st.stats,
         activity: st.activity,
+        activityHasMore: st.activityMore ?? false,
+        activityLoading: false,
         explorations,
         exploreBusy: {},
         interviewBusy: false,
@@ -252,6 +263,29 @@ export const useStudio = create<StudioState>((set, get) => ({
       });
     } finally {
       set({ loadingSession: false });
+    }
+  },
+
+  // Task 29 P1-③：向更早翻页加载活动日志（游标 = 当前最早 db id，live 事件字符串 id 不参与分页）
+  loadEarlierActivity: async () => {
+    const { session, activity, activityLoading } = get();
+    if (!session || activityLoading) return;
+    const oldestDb = activity.find((ev) => typeof ev.id === 'number');
+    if (!oldestDb) {
+      set({ activityHasMore: false });
+      return;
+    }
+    set({ activityLoading: true });
+    try {
+      const r = await agentApi.listActivity(session.id, oldestDb.id as number, 100);
+      const existing = new Set(activity.map((e) => e.id));
+      const older = r.events.filter((e) => !existing.has(e.id));
+      set({
+        activity: older.length ? [...older, ...activity] : activity,
+        activityHasMore: r.hasMore,
+      });
+    } finally {
+      set({ activityLoading: false });
     }
   },
 

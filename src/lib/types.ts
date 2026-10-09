@@ -246,6 +246,8 @@ export type SessionState = {
   explorations: Exploration[] | null;
   stats: Stats;
   activity: ActivityEvent[];
+  /** Task 29：活动日志超出初始 240 条载荷——前端「加载更早」可见性依据 */
+  activityMore?: boolean;
 };
 
 /* 标签表（NODE_KIND_LABEL / EDGE_RELATION_LABEL / PHASE_LABEL / AGENT_FACE_LABEL / TOOL_LABEL）

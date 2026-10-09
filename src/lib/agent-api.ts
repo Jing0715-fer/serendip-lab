@@ -1,5 +1,6 @@
 // agent-api.ts — agent-service HTTP 客户端（全部走 Caddy 网关，相对路径 + XTransformPort）
 import type {
+  ActivityEvent,
   BoardNode,
   Exploration,
   LlmConfigResponse,
@@ -25,7 +26,9 @@ export class ApiError extends Error {
 
 async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, ...rest } = init ?? {};
-  const res = await fetch(`/api/agent${path}?XTransformPort=${AGENT_PORT}`, {
+  // Task 29：path 自带 query（分页 before/limit）时用 & 补挂网关端口参数，避免双 ? 破坏解析
+  const qs = path.includes('?') ? '&' : '?';
+  const res = await fetch(`/api/agent${path}${qs}XTransformPort=${AGENT_PORT}`, {
     ...rest,
     headers: {
       ...(json !== undefined ? { 'content-type': 'application/json' } : {}),
@@ -61,6 +64,12 @@ export const agentApi = {
     api<CreateSessionResult>('/sessions', { method: 'POST', json: opts ?? {} }),
 
   getSession: (id: string) => api<SessionState>(`/sessions/${id}`),
+
+  // Task 29 P1-③：活动日志分页（向更早翻页）——初始会话载荷只携带尾部 240 条
+  listActivity: (id: string, before?: number, limit = 100) =>
+    api<{ events: ActivityEvent[]; hasMore: boolean; total: number }>(
+      `/sessions/${id}/activity?before=${before ?? ''}&limit=${limit}`
+    ),
 
   patchSession: (id: string, title: string) =>
     api<{ ok: boolean }>(`/sessions/${id}`, { method: 'PATCH', json: { title } }),
