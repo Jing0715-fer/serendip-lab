@@ -10,11 +10,29 @@ async function api(path: string) {
   return r.json() as any
 }
 
+// Task 31 修复：sessionFullPayload 的 activity 被 T29 分页截断在 100 条（守护事件集中在后段
+// 被整段漏掉——首采时密度窗口显示 0 触发实则 4 次）。走 /activity 游标翻全量。
+// 注意：每页内事件为正序（first=最小 id）→「向更早翻页」的游标取本页第一行的 id。
+async function allActivity(sid: string): Promise<any[]> {
+  const out: any[] = []
+  let before: number | null = null
+  for (let i = 0; i < 50; i++) {
+    const page = await api(`/sessions/${sid}/activity${before ? `?before=${before}&limit=200` : '?limit=200'}`)
+    const evts: any[] = page.events || []
+    if (!evts.length) break
+    out.push(...evts)
+    if (!page.hasMore) break
+    before = evts[0].id // 本页最老的 id 作为下一页游标
+  }
+  return out.reverse() // 页块自新到旧堆叠、页内正序 → 反转得全量时间正序
+}
+
 async function main() {
   const s = await api(`/sessions/${sid}`)
   const nodes: any[] = s.nodes || []
   const edges: any[] = s.edges || []
-  const acts: any[] = s.activity || []
+  const acts: any[] = await allActivity(sid)
+  console.log(`(activity 全量采集: ${acts.length} 条)`)
   const plan = s.plan
   const history: any[] = s.taskHistory || []
 

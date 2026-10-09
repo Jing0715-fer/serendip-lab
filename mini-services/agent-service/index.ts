@@ -487,7 +487,13 @@ console.log(`[agent-service] db at ${process.cwd()}/data/serendip.db`)
 
 // 每分钟打印运行中会话与 SSE 连接概况（写入 dev.log 便于观察）；顺带清理已无会话的死 runtime
 // 注：bun --hot 局部热重载可能让 index.ts 拿到旧模块图的 AgentRuntime（缺新方法）→ 防御性包裹
-setInterval(() => {
+// Task 31 P0 ②：interval 必须经 globalThis 注册并在重载时清掉上一图的 timer——
+// 顶层代码每次热重载都会重跑，裸 setInterval 会线性累积（实测长驻进程攒了 ~47 个心跳，
+// 各持旧模块图的 sweeper 同时补收官，酿成 429 重试风暴 + attempts 竞态冲破上限）
+const HB_KEY = '__serendip_heartbeat_timer__'
+const g = globalThis as unknown as Record<string, ReturnType<typeof setInterval> | undefined>
+if (g[HB_KEY]) clearInterval(g[HB_KEY])
+g[HB_KEY] = setInterval(() => {
   try {
     AgentRuntime.reapDead()
   } catch {

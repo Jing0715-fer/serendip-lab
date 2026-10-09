@@ -53,9 +53,39 @@ function finalRetryDelayMs(attempts: number): number {
 }
 
 /**
+ * Task 31 P0 修复——补收官重试风暴（429 herd）：
+ * bun --hot 每次热重载都会重跑 index.ts 顶层代码再注册一个心跳 interval（旧 timer 从不清除），
+ * 长驻进程可累积数十个 timer，各自持有旧模块图的 AgentRuntime Map（running 守卫跨图失效）→
+ * 同一 pendingFinal 会话被几十路 sweep 同时补收官，内层 429 重试互相火上浇油，attempts 竞态冲破上限。
+ * 修复三件套（纵深防御）：
+ * ① claimPendingFinalAttempt：触发即领取——同步原子地把 attempts+1 / lastAttemptAt=now 落库（bun:sqlite
+ *    同步执行 + JS 单线程 = 读-判-写不可分割），后到的 sweep 在退避检查处直接让位，无论来自哪个模块图；
+ * ② 心跳 interval 经 globalThis 注册、新图启动时 clearInterval 旧 timer（index.ts 侧，杜绝未来累积）；
+ * ③ finalizeNow 跨图忙锁（Symbol.for 全局符号表，热重载后各模块图共享同一 globalThis）。
+ */
+const FINALIZE_BUSY = Symbol.for('serendip.finalizeBusy')
+
+/** 领取一次补收官尝试（同步原子）：可领取则 attempts+1、lastAttemptAt=now 并返回领取后状态；否则 null */
+function claimPendingFinalAttempt(sessionId: string): PendingFinalState | null {
+  const pf = getPendingFinal(sessionId)
+  if (!pf) return null
+  if (pf.attempts >= FINAL_MAX_ATTEMPTS) return null // 自动重试上限，等手动
+  const lastAt = pf.lastAttemptAt ?? pf.since
+  if (now() < lastAt + finalRetryDelayMs(pf.attempts)) return null // 退避未到
+  const claimed: PendingFinalState = {
+    since: pf.since,
+    attempts: pf.attempts + 1,
+    lastAttemptAt: now(),
+    error: pf.error,
+  }
+  savePendingFinal(sessionId, claimed)
+  return claimed
+}
+
+/**
  * 扫描并补收官（index.ts 心跳每 60s 调一次）：
- * - 只处理 pending_final 非空且到退避时间的会话（状态全在 DB，重启后自然续跑）
- * - runtime 正在跑（研究/重综合/补收官中）→ 跳过本轮
+ * - 触发即领取（claimPendingFinalAttempt 原子占坑）：多 timer / 多模块图并发扫同一会话时只有赢家继续
+ * - runtime 正在跑（研究/重综合/补收官中）→ 跳过本轮（同图守卫；跨图由 finalizeNow 忙锁兜底）
  * - 达 FINAL_MAX_ATTEMPTS → 不再自动重试（手动 finalize 端点不受限）
  */
 export async function sweepPendingFinals(): Promise<number> {
@@ -64,14 +94,11 @@ export async function sweepPendingFinals(): Promise<number> {
     try {
       const rt = AgentRuntime.find(row.id)
       if (rt?.running) continue
-      const pf = getPendingFinal(row.id)
-      if (!pf) continue
-      if (pf.attempts >= FINAL_MAX_ATTEMPTS) continue // 自动重试上限，等手动
-      const lastAt = pf.lastAttemptAt ?? pf.since
-      if (now() < lastAt + finalRetryDelayMs(pf.attempts)) continue // 退避未到
+      const claimed = claimPendingFinalAttempt(row.id)
+      if (!claimed) continue
       insertActivity(row.id, { type: 'notice', summary: noticeFor(getSessionLang(row.id), 'finalizeAutoStart') })
-      console.log(`[sweeper] auto-finalizing ${row.id.slice(0, 8)} (attempts=${pf.attempts})`)
-      void AgentRuntime.get(row.id).finalizeNow().catch((e) => console.error('[sweep-finalize]', row.id, e))
+      console.log(`[sweeper] auto-finalizing ${row.id.slice(0, 8)} (attempts=${claimed.attempts})`)
+      void AgentRuntime.get(row.id).finalizeNow(claimed).catch((e) => console.error('[sweep-finalize]', row.id, e))
       fired++
     } catch (e) {
       console.error('[sweep-pending]', row.id, e)
@@ -501,15 +528,26 @@ export class AgentRuntime {
 
   // ---------- 补收官（Task 23 延迟收官）：手动 finalize 端点与后台 sweeper 共用 ----------
   // 语义：把当初因模型服务受限而丢失的最终综述 + 矛盾猎手补齐；成功后清 pendingFinal。
-  // 失败：attempts+1、lastAttemptAt=now 落库（重启后 sweeper 仍能续退避）。
-  async finalizeNow(): Promise<{ ok: boolean; error?: string }> {
+  // 失败：sweep 路径的 attempts 已在触发时原子领取（claimPendingFinalAttempt，Task 31 P0 防兽群），
+  //       此处只补 error；手动路径失败才 attempts+1（手动重试同样计入自动重试预算，避免无限免费重试）。
+  // 重启后 sweeper 仍能按 DB 里的 attempts/lastAttemptAt 续退避。
+  async finalizeNow(claimed?: PendingFinalState): Promise<{ ok: boolean; error?: string }> {
     if (this.running) return { ok: false, error: 'agent_busy' }
-    if (listNodes(this.sessionId).length === 0) return { ok: false, error: 'no_evidence' }
+    // Task 31 P0 ③：跨模块图忙锁——热重载残留的旧图 timer 与新图可能各持一个实例，
+    // per-instance running 守卫跨图失效；Symbol.for 全局符号表跨图共享同一把锁
+    const g = globalThis as unknown as Record<symbol, string | null>
+    if (g[FINALIZE_BUSY]) return { ok: false, error: 'agent_busy' }
+    if (listNodes(this.sessionId).length === 0) {
+      // 无证据可综合的 pendingFinal 属异常残留（如空会话误挂）——直接清掉，避免 sweeper 永远空转重试
+      savePendingFinal(this.sessionId, null)
+      return { ok: false, error: 'no_evidence' }
+    }
     this.running = true
+    g[FINALIZE_BUSY] = this.sessionId
     const lang = getSessionLang(this.sessionId)
     const recordFailure = (): void => {
       const cur = getPendingFinal(this.sessionId) ?? { since: now(), attempts: 0, error: '' }
-      const attempts = cur.attempts + 1
+      const attempts = claimed ? cur.attempts : cur.attempts + 1
       const nextDelayMin = Math.round(finalRetryDelayMs(attempts) / 60_000)
       savePendingFinal(this.sessionId, {
         since: cur.since,
@@ -517,6 +555,11 @@ export class AgentRuntime {
         lastAttemptAt: now(),
         error: (this.lastSynthError || 'synthesis failed').slice(0, 200),
       })
+      // Task 31 P0 收尾修复：失败必须把 phase/status 回置 done——callSynthesizer 进入时置了
+      // synthesizing/thinking，若不回置，前端 isAgentWorking 永真 → 补收官横幅（!working 条件）
+      // 永久遮蔽、手动按钮被锁、头部常显「Agent 工作中」。研究本体已完成（run 失败路径同样以
+      // done 收尾），缺的只是综述——由 pendingFinal 横幅表达，不该以 working 状态伪装
+      this.setPhase('done', 'done')
       insertActivity(this.sessionId, {
         type: 'notice',
         ok: false,
@@ -550,6 +593,7 @@ export class AgentRuntime {
       return { ok: true }
     } finally {
       this.running = false
+      g[FINALIZE_BUSY] = null // Task 31 P0 ③：释放跨图忙锁
     }
   }
 

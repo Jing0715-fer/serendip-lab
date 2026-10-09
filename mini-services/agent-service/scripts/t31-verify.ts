@@ -1,10 +1,12 @@
 // Task 31 单元验证：①密度守护挂到步数上限收口窗口（P1-①，三场景）②末段任务饥饿跳过（P1-②）
 // ③investigator prompt fullText 利用度指引（P2-③）④检索计数统一口径（含 clinvar）
+// ⑤补收官重试风暴回归（P0：bun --hot 累积 interval 兽群 → claim 原子领取 + 跨图忙锁）
 import {
   createSession, deleteSession, savePlan, getBudget, saveBudget,
   listNodes, listTaskRecords, listActivity, type Plan, type Budget,
+  insertNode, getPendingFinal, savePendingFinal,
 } from '../src/db'
-import { AgentRuntime } from '../src/runtime'
+import { AgentRuntime, sweepPendingFinals } from '../src/runtime'
 import { buildInvestigatorPrompt } from '../src/prompts'
 
 let pass = 0
@@ -191,6 +193,63 @@ const stubSearches = (rt: any) => {
   t('F1 clinvar_search 计入检索口径（1 次检索/精读）', sum.includes('1 次检索/精读'))
   t('F2 图操作不计检索（add_evidence 不出现在计数）', !sum.includes('2 次检索/精读'))
   deleteSession(sid)
+}
+
+// ---------- [7] 补收官重试风暴回归（P0） ----------
+{
+  console.log('[7] 补收官风暴：claim 原子领取 + 跨图忙锁 + 上限生效')
+  // 复现条件：pendingFinal 到退避时间 + 有节点（避开 no_evidence 短路）+ callSynthesizer 桩（失败路径，零 LLM）
+  const sid = createSession('t31-storm', 'zh').id
+  insertNode(sid, { kind: 'evidence', title: '风暴测试卡', content: '占位证据' })
+  savePendingFinal(sid, { since: Date.now() - 3_600_000, attempts: 0, error: 'prev' })
+  const rt = AgentRuntime.get(sid) as any
+  rt.callSynthesizer = async () => null // 触发 recordFailure 路径
+
+  // 47 路 sweep 并发（模拟 bun --hot 累积的 47 个心跳 timer：各持旧模块图的独立实例表，
+  // find() 永远 miss、running 守卫跨图失效——claim 原子领取是唯一防线。
+  // 第一路命中当前图已 stub 的实例；后续 46 路先驱逐再扫，模拟旧模块图 miss）
+  const evict = () => { (AgentRuntime as any).runtimes.delete(sid) }
+  let first = true
+  const herd = () => { if (!first) evict(); first = false; return sweepPendingFinals() }
+  await Promise.all(Array.from({ length: 47 }, herd))
+  await new Promise((r) => setTimeout(r, 80)) // 等 fire-and-forget 的 finalizeNow 收尾
+
+  const acts = listActivity(sid).map((a) => a.summary)
+  t('G1 47 路跨图 sweep 只发 1 条 finalizeAutoStart 通知', acts.filter((s) => s.includes('补收官中')).length === 1)
+  t('G2 attempts 只领取一次（=1，而非竞态冲到 47）', getPendingFinal(sid)?.attempts === 1)
+  t('G3 失败记录仅 1 条（无风暴重试刷屏）', acts.filter((s) => s.includes('次尝试失败')).length === 1)
+
+  // 退避窗口内再扫 47 路：零触发（lastAttemptAt 已在领取时落库）
+  await Promise.all(Array.from({ length: 47 }, () => { evict(); return sweepPendingFinals() }))
+  await new Promise((r) => setTimeout(r, 80))
+  t('G4 退避窗口内再扫 47 路零新通知', listActivity(sid).filter((a) => a.summary.includes('补收官中')).length === 1)
+
+  // 达上限后（attempts=12）不再自动领取
+  savePendingFinal(sid, { since: Date.now() - 3_600_000, attempts: 12, lastAttemptAt: Date.now() - 3_600_000, error: 'e' })
+  await Promise.all(Array.from({ length: 47 }, () => { evict(); return sweepPendingFinals() }))
+  await new Promise((r) => setTimeout(r, 80))
+  t('G5 达 FINAL_MAX_ATTEMPTS 后 47 路全让位（无新通知）', listActivity(sid).filter((a) => a.summary.includes('补收官中')).length === 1)
+
+  // 跨图忙锁：手动占用 Symbol.for 全局锁 → finalizeNow 拒绝
+  const g = globalThis as unknown as Record<symbol, string | null>
+  const BUSY = Symbol.for('serendip.finalizeBusy')
+  g[BUSY] = 'other-session'
+  const busy = await rt.finalizeNow()
+  t('G6 跨图忙锁被占时 finalizeNow 返回 agent_busy', busy?.error === 'agent_busy')
+  g[BUSY] = null
+
+  // 手动路径失败：attempts+1（与 sweep 领取路径的计数语义区分）
+  savePendingFinal(sid, { since: Date.now() - 3_600_000, attempts: 3, lastAttemptAt: Date.now() - 3_600_000, error: 'e' })
+  await rt.finalizeNow()
+  t('G7 手动 finalize 失败 attempts+1（3→4）', getPendingFinal(sid)?.attempts === 4)
+
+  // 无证据会话的 pendingFinal 残留：直接清除（防 sweeper 永远空转）
+  const sid2 = createSession('t31-storm-empty', 'zh').id
+  savePendingFinal(sid2, { since: Date.now() - 3_600_000, attempts: 0, error: 'e' })
+  const rt2 = AgentRuntime.get(sid2) as any
+  const noEv = await rt2.finalizeNow()
+  t('G8 无证据 pendingFinal 短路并清除', noEv?.error === 'no_evidence' && getPendingFinal(sid2) === null)
+  deleteSession(sid); deleteSession(sid2)
 }
 
 console.log(`\n${pass}/${pass + fail} passed`)
