@@ -20,6 +20,7 @@ import type {
   SessionState,
   SessionSummary,
   Stats,
+  TaskRecord,
 } from '@/lib/types';
 
 // ---------- SSE 事件（与后端 emitter.ts 一一对应） ----------
@@ -30,7 +31,7 @@ export type AgentEvent =
   | { type: 'thought'; step: number; text: string }
   | { type: 'tool_call'; callId: string; tool: string; args: Record<string, unknown>; step: number }
   | { type: 'tool_result'; callId: string; tool: string; ok: boolean; summary: string; durationMs: number; step: number }
-  | { type: 'state'; nodes: BoardNode[]; edges: BoardEdge[]; narrative: string; questions: ResearchQuestion[]; plan: Plan | null; stats: Stats; phase: SessionPhase; status: AgentStatus; pendingFinal?: PendingFinal | null }
+  | { type: 'state'; nodes: BoardNode[]; edges: BoardEdge[]; narrative: string; questions: ResearchQuestion[]; plan: Plan | null; taskHistory?: TaskRecord[]; stats: Stats; phase: SessionPhase; status: AgentStatus; pendingFinal?: PendingFinal | null }
   | { type: 'plan'; plan: Plan }
   | ({ type: 'directions' } & ResearchDirections)
   | { type: 'explore'; nodeId: string; exploration: Exploration }
@@ -58,6 +59,8 @@ type StudioState = {
   narrative: string;
   questions: ResearchQuestion[];
   plan: Plan | null;
+  /** Task 30：跨轮任务历史（state 快照随发） */
+  taskHistory: TaskRecord[];
   directions: ResearchDirections | null;
   stats: Stats | null;
   activity: ActivityEvent[];
@@ -136,8 +139,8 @@ type StudioState = {
 let liveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function ingestState(
-  s: Pick<StudioState, 'nodes' | 'edges' | 'narrative' | 'questions' | 'plan' | 'stats' | 'session'>,
-  st: { nodes?: BoardNode[]; edges?: BoardEdge[]; narrative?: string; questions?: ResearchQuestion[]; plan?: Plan | null; stats?: Stats; phase?: SessionPhase; status?: AgentStatus; pendingFinal?: PendingFinal | null }
+  s: Pick<StudioState, 'nodes' | 'edges' | 'narrative' | 'questions' | 'plan' | 'taskHistory' | 'stats' | 'session'>,
+  st: { nodes?: BoardNode[]; edges?: BoardEdge[]; narrative?: string; questions?: ResearchQuestion[]; plan?: Plan | null; taskHistory?: TaskRecord[]; stats?: Stats; phase?: SessionPhase; status?: AgentStatus; pendingFinal?: PendingFinal | null }
 ): Record<string, unknown> {
   const prevIds = new Set(s.nodes.map((n) => n.id));
   const newNodes = st.nodes ?? s.nodes;
@@ -148,6 +151,8 @@ function ingestState(
     narrative: st.narrative ?? s.narrative,
     questions: st.questions ?? s.questions,
     plan: st.plan !== undefined ? st.plan : s.plan,
+    // Task 30：跨轮任务历史（state 事件未携带时保留现值）
+    taskHistory: st.taskHistory ?? s.taskHistory,
     stats: st.stats ?? s.stats,
   };
   // Task 23：pendingFinal 随快照更新（sweeper 补齐成功 → null 横幅自动消失；失败重试 → attempts 增长）
@@ -185,6 +190,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   narrative: '',
   questions: [],
   plan: null,
+  taskHistory: [],
   directions: null,
   stats: null,
   activity: [],
@@ -249,6 +255,8 @@ export const useStudio = create<StudioState>((set, get) => ({
         narrative: st.narrative,
         questions: st.questions,
         plan: st.plan,
+        // Task 30：跨轮任务历史（含前轮已完成任务与轨迹小结）
+        taskHistory: st.taskHistory ?? [],
         directions: st.directions ?? null,
         stats: st.stats,
         activity: st.activity,

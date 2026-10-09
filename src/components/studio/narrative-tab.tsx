@@ -5,7 +5,7 @@
 // Task 23：延迟收官横幅 —— 最终综述因配额受限丢失时，展示自动重试状态 + 手动补收官 CTA
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AlertTriangle, CheckCircle2, Circle, Compass, Loader2, RefreshCw, ScrollText, Sparkles, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Circle, Compass, History, Loader2, RefreshCw, ScrollText, Sparkles, Zap } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useStudio, isAgentWorking } from '@/store/studio';
@@ -14,6 +14,7 @@ import { fmt, useT } from '@/lib/i18n';
 export function NarrativeTab() {
   const narrative = useStudio((s) => s.narrative);
   const plan = useStudio((s) => s.plan);
+  const taskHistory = useStudio((s) => s.taskHistory);
   const directions = useStudio((s) => s.directions);
   const directionsBusy = useStudio((s) => s.directionsBusy);
   const session = useStudio((s) => s.session);
@@ -28,6 +29,11 @@ export function NarrativeTab() {
 
   const working = isAgentWorking(session?.status);
   const pendingFinal = session?.pendingFinal ?? null;
+
+  // Task 30 P1-①：跨轮任务历史——排除当前轮（当前轮任务在上方「研究计划」区实时展示，避免重复）
+  const currentRound = plan?.round ?? -1;
+  const history = taskHistory.filter((r) => r.round !== currentRound);
+  const historyRounds = [...new Set(history.map((r) => r.round))].sort((a, b) => a - b);
 
   return (
     <div className="studio-scroll h-full overflow-y-auto bg-[#f7f4ee] px-4 py-4 dark:bg-[#171411] sm:px-6">
@@ -102,6 +108,56 @@ export function NarrativeTab() {
               </ul>
             </div>
           )}
+        </section>
+      )}
+
+      {/* 跨轮任务历史（Task 30 P1-①）：savePlan 每轮整体覆盖，前轮已完成任务连同轨迹小结
+          曾从视图永久丢失——这里从追加式 task_records 表渲染累积视图 */}
+      {history.length > 0 && (
+        <section className="mb-5 rounded-2xl border border-stone-300/70 bg-white/60 p-4 shadow-sm dark:border-stone-700 dark:bg-stone-800/50">
+          <div className="mb-3 flex items-center gap-2">
+            <History size={13} className="text-stone-400" />
+            <span className="text-[11px] font-semibold tracking-wider text-stone-500 dark:text-stone-400">
+              {t('narrative.historyTitle')}
+            </span>
+            <span className="rounded-full bg-stone-200/80 px-1.5 py-0.5 text-[10px] tabular-nums text-stone-500 dark:bg-stone-700 dark:text-stone-400">
+              {history.length}
+            </span>
+          </div>
+          <div className="space-y-3">
+            {historyRounds.map((round) => (
+              <div key={round}>
+                <div className="mb-1.5 text-[10.5px] font-semibold tracking-wider text-amber-800/80 dark:text-amber-500/70">
+                  {fmt(t('narrative.historyRound'), { n: String(round) })}
+                </div>
+                <div className="space-y-1.5">
+                  {history
+                    .filter((r) => r.round === round)
+                    .map((r) => (
+                      <div
+                        key={r.id}
+                        className="rounded-lg bg-stone-50/80 px-2.5 py-1.5 text-[12.5px] dark:bg-stone-800/60"
+                      >
+                        <div className="flex items-start gap-2">
+                          <CheckCircle2 size={14} className="mt-0.5 shrink-0 text-emerald-600" />
+                          <div className="min-w-0 flex-1">
+                            <div className="leading-snug text-stone-600 line-through decoration-stone-400/60 dark:text-stone-300">
+                              {r.goal}
+                            </div>
+                            {r.summary && (
+                              <div className="mt-0.5 line-clamp-3 text-[11px] leading-relaxed text-stone-400">{r.summary}</div>
+                            )}
+                            <div className="mt-1 text-[10px] tabular-nums text-stone-400 dark:text-stone-500">
+                              {fmt(t('narrative.historyMeta'), { pinned: String(r.pinned), searches: String(r.searches) })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 

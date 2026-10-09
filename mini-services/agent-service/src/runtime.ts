@@ -9,6 +9,7 @@ import {
   replaceQuestions, deleteStaleTopicNodes, computeStats, NODE_KINDS, EDGE_RELATIONS, EVIDENCE_LEVELS,
   normalizeNodeStatus,
   getPendingFinal, savePendingFinal, listPendingFinalSessions,
+  insertTaskRecord, listTaskRecords,
   type SessionPhase, type AgentStatus, type Plan, type PlanTask,
   type BoardNode, type ChatMessage, type ResearchQuestion, type EvidenceLevel,
   type PendingFinalState,
@@ -125,6 +126,8 @@ export function stateSnapshot(sessionId: string): Record<string, unknown> {
     narrative: row.narrative || '',
     questions: listQuestions(sessionId),
     plan: getPlan(sessionId),
+    // Task 30 P1-①：跨轮任务历史随 state 快照下发（前轮任务不再随 savePlan 覆盖丢失）
+    taskHistory: listTaskRecords(sessionId),
     stats,
     phase: row.phase,
     status: row.status,
@@ -848,6 +851,8 @@ export class AgentRuntime {
         task.done = true
         task.summary = String(args.summary || '').slice(0, 400)
         this.persistTask(task)
+        // Task 30 P1-①：闭环即落跨轮任务历史（finish_task 路径）
+        this.recordClosedTask(task, scratchpad, nodesBeforeIds)
         this.persistStep()
         insertActivity(this.sessionId, { type: 'notice', summary: `${L(this.sessionId, '任务完成', 'Task completed')}: ${oneLine(task.goal, 80)} — ${oneLine(task.summary || '', 150)}` })
         return
@@ -892,6 +897,8 @@ export class AgentRuntime {
       task.done = true
       task.summary = this.composeFallbackSummary(scratchpad, nodesBeforeIds)
       this.persistTask(task)
+      // Task 30 P1-①：步数封顶收口同样落跨轮任务历史（第十一领域实证 5/5 任务走此路径）
+      this.recordClosedTask(task, scratchpad, nodesBeforeIds)
     }
   }
 
@@ -907,10 +914,15 @@ export class AgentRuntime {
     const pinned = newNodes.filter((n) => n.kind === 'evidence' || n.kind === 'source')
     const others = newNodes.filter((n) => n.kind === 'hypothesis' || n.kind === 'gap' || n.kind === 'insight')
     const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
-    // 末段有效思路：排除系统注入的自检条目（__step_cap__/纠错反馈）与空 thought
-    const lastThought = [...scratchpad]
-      .reverse()
-      .find((s) => (s.thought || '').trim() && s.action?.tool !== '__step_cap__' && s.action?.tool !== '__invalid_output__' && !/收尾自检|纠正/.test(s.thought))
+    // 末段有效思路：排除系统注入的自检条目（__step_cap__/纠错反馈）与空 thought；
+    // Task 30 P2-③：优先取最后一个「非策略性」thought——末段若是「我需要调整检索策略」这类
+    // 过程性文本，对综合阶段毫无信息量（T29 E2E 实证样例）；全为策略性时退回原选取
+    const isValidThought = (s: ScratchEntry) =>
+      (s.thought || '').trim() && s.action?.tool !== '__step_cap__' && s.action?.tool !== '__invalid_output__' && !/收尾自检|纠正/.test(s.thought)
+    const STRATEGY_THOUGHT_RE =
+      /(调整|改变|更换?|换个?)(策略|思路|方向|检索式?|关键词)|(重新)?(换词|重试|再试|重新检索)|另(?:外)?尝试|换.{0,4}(词|关键词|思路)|adjust (?:my |the )?(?:strategy|approach|search)|rephrase|retry|try (?:a |another )?(?:different|another|new)/i
+    const reversed = [...scratchpad].reverse()
+    const lastThought = reversed.find((s) => isValidThought(s) && !STRATEGY_THOUGHT_RE.test(s.thought)) ?? reversed.find(isValidThought)
     const parts: string[] = []
     if (pinned.length) {
       const titles = pinned.map((n) => oneLine(n.title, 30)).slice(0, 4).join('；')
@@ -949,6 +961,31 @@ export class AgentRuntime {
       t.summary = task.summary
     }
     savePlan(this.sessionId, p)
+  }
+
+  /**
+   * Task 30 P1-①：任务闭环 → 追加式落跨轮任务历史（savePlan 每轮整体覆盖，
+   * 前轮已完成任务连同轨迹小结会从 plan 视图丢失——这里独立成表永久留存，
+   * 供前端任务历史视图/导出/最终综合引用）。幂等：同 session+round+task_id 重收口覆盖更新。
+   */
+  private recordClosedTask(task: PlanTask, scratchpad: ScratchEntry[], nodesBeforeIds: Set<string>) {
+    try {
+      const nodes = listNodes(this.sessionId)
+      const pinned = nodes.filter((n) => !nodesBeforeIds.has(n.id) && (n.kind === 'evidence' || n.kind === 'source')).length
+      const searches = scratchpad.filter((s) => /pubmed_|europepmc_|openalex_|web_read|web_search|uniprot|ncbi_|pdb/i.test(String(s.action?.tool || ''))).length
+      const round = getPlan(this.sessionId)?.round ?? getBudget(this.sessionId).round ?? 1
+      insertTaskRecord(this.sessionId, {
+        taskId: task.id,
+        round,
+        goal: task.goal,
+        why: task.why || '',
+        summary: task.summary || '',
+        pinned,
+        searches,
+      })
+    } catch (e) {
+      console.error('[task-record] insert failed:', this.sessionId, task.id, e)
+    }
   }
 
   // ---------- 工具执行（含 tool_call/tool_result 事件） ----------

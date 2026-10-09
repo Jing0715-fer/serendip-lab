@@ -109,7 +109,7 @@ async function pubmedFetch(args: { pmids: string[] | string }) {
   pmids = pmids.map((s) => String(s).trim()).filter(Boolean).slice(0, 5)
   if (!pmids.length) return { error: '缺少 pmids 参数（≤5 个）' }
   const xml = await eutils(() => getText(`${EUTILS}/efetch.fcgi?db=pubmed&retmode=xml&id=${pmids.join(',')}`))
-  const articles: { pmid: string; title: string; abstract: string }[] = []
+  const articles: { pmid: string; title: string; abstract: string; fullText?: string }[] = []
   const blocks = xml.match(/<PubmedArticle>[\s\S]*?<\/PubmedArticle>/g) || []
   for (const b of blocks) {
     const pmidM = b.match(/<PMID[^>]*>(\d+)<\/PMID>/)
@@ -124,7 +124,54 @@ async function pubmedFetch(args: { pmids: string[] | string }) {
     })
   }
   if (!articles.length) return { error: 'efetch 未解析到文章（XML 格式异常或无结果）' }
-  return { articles }
+
+  // Task 30 P1-② 全文降级链：摘要 → EuropePMC OA 全文 → note 建议替代路径。
+  // T29 E2E 实证：模型在摘要止步后常自述「无法直接获取 PubMed 全文，需调整策略」并浪费步数自行摸索——
+  // 把降级做进工具内部（对模型透明）：先批量查 EuropePMC 取 pmcid/openAccess，再对前 ≤3 篇
+  // OA 文章并行拉 JATS 全文（<body> 去标签取前 1200 字）；拿不到全文的在 note 里给出
+  // web_read DOI 落地页的替代路径，模型不再需要自行「调整策略」。
+  try {
+    const q = pmids.map((p) => `EXT_ID:${p}`).join(' OR ')
+    // search 独立降级：此请求失败（网络抖动/限流双败）只损失全文补齐，note 仍生成
+    let byPmid = new Map<string, string>()
+    try {
+      const j = await getJson(
+        `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(q)}&format=json&resultType=core&pageSize=25`
+      )
+      for (const r of j?.resultList?.result || []) {
+        const pmid = String(r?.pmid || r?.extId || '')
+        const pmcid = String(r?.pmcid || '')
+        if (pmid && pmcid && (r?.isOpenAccess === 'Y' || r?.inEPMC === 'Y')) byPmid.set(pmid, pmcid)
+      }
+    } catch { /* EuropePMC search 失败 → 空 mapping，纯摘要 + note */ }
+    const targets = articles.filter((a) => byPmid.has(a.pmid)).slice(0, 3)
+    const fulls = await Promise.allSettled(
+      targets.map((a) =>
+        // 实测 URL 形式：/rest/{PMCID}/fullTextXML（PMCID 自带 PMC 前缀，不加 source 段；
+        // 加 "PMC/" 或 "pmc/" 前缀段均 404）
+        getText(`https://www.ebi.ac.uk/europepmc/webservices/rest/${byPmid.get(a.pmid)}/fullTextXML`)
+          .then((fx) => {
+            const body = fx.match(/<body[\s\S]*?<\/body>/)?.[0] ?? ''
+            return decodeEntities(body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 1200)
+          })
+      )
+    )
+    let fullCount = 0
+    targets.forEach((a, i) => {
+      const r = fulls[i]
+      if (r.status === 'fulfilled' && r.value.length > 80) {
+        a.fullText = r.value
+        fullCount++
+      }
+    })
+    const note = fullCount
+      ? `已自动补齐 ${fullCount} 篇开放获取全文（fullText 字段）；其余仅摘要可得，需要更多细节时可 web_read 该文献的 DOI 落地页/期刊页`
+      : '均为摘要级（非开放获取或全文不可用）；需要更多细节时可 web_read 该文献的 DOI 落地页/期刊页'
+    return { articles, note }
+  } catch {
+    // EuropePMC 链路整体失败 → 退回纯摘要返回（不阻断主结果）
+    return { articles }
+  }
 }
 
 async function europepmcSearch(args: { query: string; max?: number }) {
@@ -351,8 +398,8 @@ export const EXTERNAL_TOOLS: ToolSpec[] = [
   {
     name: 'pubmed_fetch',
     params: '{pmids: string[]}（≤5 个）',
-    usage: '获取 PubMed 文章摘要全文（配合 pubmed_search 的 pmid 深读）',
-    returns: '{articles:[{pmid,title,abstract}]}',
+    usage: '获取 PubMed 文章摘要，并自动尝试 EuropePMC 开放获取全文（前 3 篇自动补 fullText 字段）',
+    returns: '{articles:[{pmid,title,abstract,fullText?}], note}',
     run: pubmedFetch,
   },
   {

@@ -222,6 +222,24 @@ export type PendingFinal = {
   error: string;
 };
 
+/** 任务历史记录（Task 30）：任务闭环时追加落库，跨轮永久留存（savePlan 每轮覆盖的补救） */
+export type TaskRecord = {
+  id: number;
+  sessionId: string;
+  taskId: string;
+  /** 研究轮次（1 起） */
+  round: number;
+  goal: string;
+  why: string;
+  /** finish_task 小结或步数封口轨迹小结 */
+  summary: string;
+  /** 本任务新钉 evidence/source 卡数 */
+  pinned: number;
+  /** 本任务检索/精读动作数 */
+  searches: number;
+  closedAt: number;
+};
+
 export type SessionFull = {
   id: string;
   title: string;
@@ -242,6 +260,8 @@ export type SessionState = {
   narrative: string;
   questions: ResearchQuestion[];
   plan: Plan | null;
+  /** Task 30：跨轮任务历史（前轮已完成任务不再随 savePlan 覆盖丢失） */
+  taskHistory?: TaskRecord[];
   directions: ResearchDirections | null;
   explorations: Exploration[] | null;
   stats: Stats;

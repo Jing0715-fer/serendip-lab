@@ -179,6 +179,11 @@ const DICT = {
   'narrative.resyncBusy': ['正在重新梳理综述…', 'Re-synthesizing the review…'],
   'narrative.resyncDone': ['综述已按最新证据墙重新梳理', 'Review re-synthesized from the latest wall'],
 
+  /* 跨轮任务历史（Task 30）：前轮已完成任务的累积视图 */
+  'narrative.historyTitle': ['任务历史 · 跨轮累积', 'Task history · across rounds'],
+  'narrative.historyMeta': ['落卡 {pinned} 张 · 检索 {searches} 次', '{pinned} cards pinned · {searches} searches'],
+  'narrative.historyRound': ['第 {n} 轮', 'Round {n}'],
+
   /* 延迟收官横幅（Task 23：最终综述因配额受限未完成 → 可自动/手动补齐） */
   'narrative.pendingTitle': ['最终综述尚未完成', 'The final review is incomplete'],
   'narrative.pendingBody': [

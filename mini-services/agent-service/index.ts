@@ -3,7 +3,7 @@ import {
   createSession, getSessionRow, mapSessionFull, listSessionSummaries, deleteSession,
   updateSessionFields, listMessages, listNodes, listEdges, listQuestions, getPlan,
   listActivity, listActivityPage, insertActivity, insertNode, insertMessage, setNodePositions, updateNode, getBudget,
-  computeStats, touchSession, getDirections, listExplorations, NODE_KINDS,
+  computeStats, touchSession, getDirections, listExplorations, NODE_KINDS, listTaskRecords,
 } from './src/db'
 import { broadcast, makeSseResponse } from './src/emitter'
 import { AgentRuntime, stateSnapshot, sweepPendingFinals } from './src/runtime'
@@ -64,6 +64,8 @@ function sessionFullPayload(id: string) {
     narrative: row.narrative || '',
     questions: listQuestions(id),
     plan: getPlan(id),
+    // Task 30 P1-①：跨轮任务历史（前轮已完成任务不再随 savePlan 覆盖丢失）
+    taskHistory: listTaskRecords(id),
     directions: getDirections(id),
     explorations: listExplorations(id),
     stats,

@@ -304,6 +304,14 @@ CREATE TABLE IF NOT EXISTS explorations(
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_explore_session ON explorations(session_id);
+CREATE TABLE IF NOT EXISTS task_records(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL,
+  task_id TEXT NOT NULL, round INTEGER NOT NULL DEFAULT 1,
+  goal TEXT NOT NULL, why TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '', pinned INTEGER NOT NULL DEFAULT 0,
+  searches INTEGER NOT NULL DEFAULT 0, closed_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_taskrec_unique ON task_records(session_id, round, task_id);
 `)
 
 // 轻量迁移：老库补 nodes.detail 列（卡片详细说明，Task 11）
@@ -552,6 +560,52 @@ export function getPlan(id: string): Plan | null {
 
 export function savePlan(id: string, plan: Plan | null) {
   updateSessionFields(id, { plan: plan ? JSON.stringify(plan) : null })
+}
+
+// ---------- 任务历史（Task 30 P1-①）：跨轮任务记录累积 ----------
+// 动机：savePlan 每轮整体覆盖——前轮已完成任务（含 T29 轨迹小结）从 plan 视图消失，
+// metrics/前端只见最后一轮。task_records 追加式落库，闭环即写（finish_task 与步数封顶两路收口都挂）。
+
+export type TaskRecord = {
+  id: number
+  sessionId: string
+  taskId: string
+  round: number
+  goal: string
+  why: string
+  summary: string
+  /** 本任务新钉 evidence/source 卡数 */
+  pinned: number
+  /** 本任务检索/精读动作数 */
+  searches: number
+  closedAt: number
+}
+
+/** 闭环落历史（幂等：同 session+round+task_id 重收口时覆盖更新 summary/pinned） */
+export function insertTaskRecord(sessionId: string, rec: Omit<TaskRecord, 'id' | 'sessionId' | 'closedAt'>) {
+  const t = now()
+  db.run(
+    `INSERT INTO task_records(session_id, task_id, round, goal, why, summary, pinned, searches, closed_at)
+     VALUES(?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(session_id, round, task_id) DO UPDATE SET
+       summary=excluded.summary, pinned=excluded.pinned, searches=excluded.searches, closed_at=excluded.closed_at`,
+    [sessionId, String(rec.taskId).slice(0, 64), Math.max(1, Math.round(Number(rec.round) || 1)),
+     String(rec.goal).slice(0, 300), String(rec.why || '').slice(0, 300),
+     String(rec.summary || '').slice(0, 400), Math.max(0, Math.round(Number(rec.pinned) || 0)),
+     Math.max(0, Math.round(Number(rec.searches) || 0)), t]
+  )
+}
+
+export function listTaskRecords(sessionId: string): TaskRecord[] {
+  const rows = db
+    .query('SELECT id, session_id, task_id, round, goal, why, summary, pinned, searches, closed_at FROM task_records WHERE session_id = ? ORDER BY round ASC, closed_at ASC')
+    .all(sessionId) as any[]
+  return rows.map((r) => ({
+    id: Number(r.id), sessionId: String(r.session_id), taskId: String(r.task_id),
+    round: Number(r.round), goal: String(r.goal || ''), why: String(r.why || ''),
+    summary: String(r.summary || ''), pinned: Number(r.pinned || 0),
+    searches: Number(r.searches || 0), closedAt: Number(r.closed_at || 0),
+  }))
 }
 
 // ---------- directions（深研方向，Task 12） ----------
